@@ -80,7 +80,9 @@ It returns:
 - `tests`: the test tasks the lock run ran, run in the sandbox.
 - `release`: every package published by Mill's own Maven publisher
   (`mill.javalib.MavenPublishModule`) into a Maven repository, with its
-  checksums and `maven-metadata.xml`. It is what `publish` uploads.
+  checksums and `maven-metadata.xml`. Mill 1.1.0 is the first release with
+  that publisher: on an older Mill, `release` fails when evaluated, with a
+  message that names Mill 1.1.0, and the packages and the tests build.
 - `fetches`: the entries of the lock, the downloads of the build as
   purifier library entries. An entry needed on one system only, such as a
   JVM archive, carries `systems`.
@@ -115,9 +117,10 @@ Mill's BuildInfo plugin.
 
 ## Development loop
 
-Mill has no plugin mechanism that reaches every build, so the everyday
-loop goes through `mill-purifier mill`, which runs Mill's own launcher with
-its arguments, offline, on the locked downloads:
+Mill has no plugin mechanism that reaches every build, so the command
+wraps Mill from outside, and the development loop goes through
+`mill-purifier mill`, which runs Mill's own launcher with its arguments,
+offline, on the locked downloads:
 
 ```zsh
 mill-purifier mill core.compile
@@ -175,7 +178,9 @@ mill-purifier publish mill.javalib.SonatypeCentralPublishModule/
 ```
 
 builds every package with Nix, writes a Mill build whose `publishArtifacts`
-tasks return the files of the packages, and runs the publisher on it.
+tasks return the files of the packages, and runs the publisher that you
+name on it, so the upload goes through the publisher of your choice and
+not through `release`.
 Every Mill publisher takes the tasks to publish as `--publishArtifacts`,
 and the command adds `--publishArtifacts __.publishArtifacts` unless the
 arguments name it. Credentials and signing work as they do for the
@@ -195,7 +200,7 @@ build server needs. Their garbage-collector roots are links in
 `.mill-purifier/` beside the lockfile, and `.mill-purifier/prefetch.json`
 records the store paths and the lockfile they were built from. After a prefetch,
 `mill-purifier mill` needs neither Nix nor the network while the lockfile
-stays the same, so the everyday loop and the editor work with the network
+stays the same, so the development loop and the editor work with the network
 cut off. `mill-purifier mill` prefetches by itself when no prefetch of the
 current lockfile exists.
 
