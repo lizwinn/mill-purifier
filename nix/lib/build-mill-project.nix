@@ -127,12 +127,8 @@ let
       lock.mill.archives.${system}
         or (throw "mill-purifier: ${toString lockFile} locks the JVMs of the build for ${lib.concatStringsSep " and " (builtins.attrNames lock.mill.archives)}, not for ${system}.");
   # What fetchEntry and tree of the purifier library take: the tools of the
-  # package set by name, and the fetchers of the caller. `tree` makes its
-  # directory with `pkgs.runCommand`, so it gets a `pkgs` that holds that.
+  # package set by name, and the fetchers of the caller.
   fetcherArgs = {
-    pkgs = {
-      inherit runCommand;
-    };
     inherit
       fetchurl
       runCommand
