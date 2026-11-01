@@ -290,11 +290,67 @@ class PrefetchStateTest(unittest.TestCase):
             (store / "deps").mkdir(parents=True)
             (store / "archives").mkdir()
             state = {"contentHash": "sha256:1", "dependencies": str(store / "deps"), "archiveCache": str(store / "archives")}
-            write(root, "out/mill-purifier/prefetch.json", json.dumps(state))
-            self.assertEqual(mp.prefetched(root, {"contentHash": "sha256:1"})["dependencies"], str(store / "deps"))
-            self.assertIsNone(mp.prefetched(root, {"contentHash": "sha256:2"}))
+            write(root, "locks/.mill-purifier/prefetch.json", json.dumps(state))
+            lock_file = root / "locks" / mp.LOCK_FILE
+            self.assertEqual(mp.prefetched(lock_file, {"contentHash": "sha256:1"})["dependencies"], str(store / "deps"))
+            self.assertIsNone(mp.prefetched(lock_file, {"contentHash": "sha256:2"}))
             (store / "archives").rmdir()
-            self.assertIsNone(mp.prefetched(root, {"contentHash": "sha256:1"}))
+            self.assertIsNone(mp.prefetched(lock_file, {"contentHash": "sha256:1"}))
+
+
+class SeedListingsTest(unittest.TestCase):
+    LISTING = "https/repo1.maven.org/maven2/com/lihaoyi/sourcecode_3/maven-metadata.xml"
+    OTHER = "https/repo1.maven.org/maven2/org/scalameta/munit_3/maven-metadata.xml"
+    LOCK = {
+        "artifacts": [
+            {"path": LISTING, "contents": "<metadata>sourcecode</metadata>"},
+            {"path": OTHER, "contents": "<metadata>munit</metadata>"},
+            {"path": "https/repo1.maven.org/maven2/a/b/1/b-1.jar", "hash": "sha256-x"},
+        ]
+    }
+
+    def seeded(self, updated, mirror=None):
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp)
+            with mock.patch.dict(os.environ, {"MILL_PURIFIER_MAVEN_CENTRAL_MIRROR": mirror or ""}), redirect_stderr(io.StringIO()):
+                mp.seed_listings(cache, self.LOCK, updated)
+            return {p: (cache / p).read_text() for p in coursier_cache.downloaded_files(cache)}, sorted(
+                p.name for p in cache.rglob(".*.checked")
+            )
+
+    def test_lock_places_every_recorded_listing_as_fresh(self):
+        files, markers = self.seeded(None)
+        self.assertEqual(files, {self.LISTING: "<metadata>sourcecode</metadata>", self.OTHER: "<metadata>munit</metadata>"})
+        self.assertEqual(markers, [".maven-metadata.xml.checked"] * 2)
+
+    def test_update_of_everything_places_none(self):
+        self.assertEqual(self.seeded([])[0], {})
+
+    def test_update_of_a_module_leaves_out_its_listing(self):
+        self.assertEqual(list(self.seeded(["com.lihaoyi:sourcecode_3"])[0]), [self.OTHER])
+
+    def test_listings_go_where_the_mirror_puts_them(self):
+        mirror = "https://mirror.example/maven2"
+        files, _ = self.seeded(None, mirror)
+        self.assertIn("https/mirror.example/maven2/com/lihaoyi/sourcecode_3/maven-metadata.xml", files)
+
+
+class LockfileOptionTest(unittest.TestCase):
+    def test_the_environment_names_the_lockfile_and_the_option_wins(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write(root, "build.mill", "//| mill-version: 1.3.1\n")
+            seen = []
+            with mock.patch.object(mp, "lock", side_effect=lambda r, f, **kw: seen.append((f, kw))), mock.patch.object(
+                Path, "cwd", return_value=root
+            ), mock.patch.dict(os.environ, {"MILL_PURIFIER_LOCKFILE": str(root / "a.json")}):
+                mp.main(["lock"])
+                mp.main(["update", "--lockfile", str(root / "b.json"), "com.lihaoyi:sourcecode_3"])
+                self.assertEqual(mp.main(["update", "sourcecode"]), 2)
+            self.assertEqual(
+                seen,
+                [(root / "a.json", {"tests": None}), (root / "b.json", {"updated": ["com.lihaoyi:sourcecode_3"]})],
+            )
 
 
 class RunWatchingTest(unittest.TestCase):

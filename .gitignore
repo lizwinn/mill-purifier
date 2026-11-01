@@ -5,3 +5,4 @@ out/
 .bloop/
 .idea/
 __pycache__/
+.mill-purifier/

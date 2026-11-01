@@ -28,12 +28,20 @@ Nix sandbox:
   `mill-purifier mill` after a prefetch, with no network).
 - `treefmt` checks the Nix formatting.
 
-Two conformance checks need what the sandbox does not have, so they are
+Three conformance checks need what the sandbox does not have, so they are
 jobs of the same name in `.github/workflows/check.yml`, on both
 architectures:
 
 - `conformance-relock` runs `tests/relock-fixtures.sh`, which locks every
-  fixture again with the network, and fails when a lockfile changed.
+  fixture again with the network, and fails when a lockfile changed. For
+  `tests/fixtures/ranged`, whose dependency has a version range, this
+  checks that `lock` keeps the resolution of the lockfile.
+- `conformance-update` runs `tests/update-fixture.sh`, which runs
+  `mill-purifier update` on a copy of `tests/fixtures/ranged` and checks
+  that cats-kernel moves from 2.9.0 to 2.10.0 and that `readLock` then
+  reports no problem. The fixture lockfile pins 2.9.0 because it records
+  the version listing as it was before 2.10.0;
+  `tests/age-ranged-listing.py` describes how it is made.
 - `conformance-rebuild` builds the fixture packages twice
   (`nix build --rebuild`) and fails when the outputs differ.
 

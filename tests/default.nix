@@ -252,8 +252,8 @@ in
         cp -r ${./fixtures/simple} project
         chmod -R u+w project
         cd project
-        mkdir -p out/mill-purifier
-        cp "$prefetchStatePath" out/mill-purifier/prefetch.json
+        mkdir -p .mill-purifier
+        cp "$prefetchStatePath" .mill-purifier/prefetch.json
         mill-purifier mill --no-daemon --ticker false core.compile + core.test
         touch $out
       '';

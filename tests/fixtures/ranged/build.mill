@@ -1,0 +1,13 @@
+//| mill-version: 1.3.1
+//| mill-jvm-version: system
+// A build whose dependency has a version range, for the update check. Its
+// lockfile pins cats-kernel 2.9.0: it records the version listing of
+// cats-kernel_3 as it was before 2.10.0 was published, so a lock keeps
+// 2.9.0 and `mill-purifier update` moves it to 2.10.0.
+package build
+import mill.*, scalalib.*
+
+object core extends ScalaModule {
+  def scalaVersion = "3.7.3"
+  def mvnDeps = Seq(mvn"org.typelevel::cats-kernel:[2.9.0,2.11.0)")
+}

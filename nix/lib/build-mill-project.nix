@@ -81,7 +81,12 @@ let
       name = baseNameOf path;
     in
     !(
-      (type == "directory" && (name == "out" || name == ".bsp" || name == ".metals" || name == ".bloop"))
+      (
+        type == "directory"
+        && (
+          name == "out" || name == ".bsp" || name == ".metals" || name == ".bloop" || name == ".mill-purifier"
+        )
+      )
       || name == ".git"
       || name == ".idea"
       || lib.hasPrefix "result" name

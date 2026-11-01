@@ -6,11 +6,19 @@
                               mill-purifier.lock.json at the build root. The
                               lock run runs the test tasks SELECTOR names
                               (`none` for none); the default is the selector
-                              of the existing lockfile, or __.testForked
+                              of the existing lockfile, or __.testForked. It
+                              keeps the resolution of the existing lockfile:
+                              a version range resolves against the version
+                              listings it recorded
+  mill-purifier update [ORG:NAME...]
+                              locks like lock, with the version ranges of
+                              the build resolved again against the current
+                              version listings: of every dependency, or of
+                              the dependencies named
   mill-purifier prefetch      builds everything the lockfile lists for this
                               system with Nix, under GC roots in
-                              out/mill-purifier, so Mill and editors then
-                              run without the network
+                              .mill-purifier beside the lockfile, so Mill
+                              and editors then run without the network
   mill-purifier mill ARGS...  runs Mill offline, from the locked downloads
   mill-purifier publish PUBLISHER ARGS...
                               builds the packages with Nix and runs a Mill
@@ -18,7 +26,8 @@
                               mill.javalib.SonatypeCentralPublishModule/
 
 Every verb takes `--lockfile PATH` first, for a lockfile kept outside the
-build.
+build. Without it, the command reads MILL_PURIFIER_LOCKFILE, and then the
+lockfile at the build root.
 
 The command runs from the root of the Mill build (the directory with
 build.mill or build.mill.yaml). Its Nix package sets MILL_PURIFIER_JDK (the
@@ -54,7 +63,9 @@ MAVEN_CENTRAL = "https://repo1.maven.org/maven2"
 MAVEN_CENTRAL_MIRROR = "https://maven-central.storage-download.googleapis.com/maven2"
 # Directories that never take part in a build, as buildMillProject's
 # default source filter leaves them out.
-SKIPPED_DIRS = {"out", ".git", ".bsp", ".idea", ".metals", ".bloop"}
+SKIPPED_DIRS = {"out", ".git", ".bsp", ".idea", ".metals", ".bloop", ".mill-purifier"}
+# The directory beside the lockfile that holds the GC roots of a prefetch.
+PREFETCH_DIR = ".mill-purifier"
 
 
 class Failure(Exception):
@@ -487,14 +498,56 @@ def content_hash(lock_data):
     return "sha256:" + hashlib.sha256(text.encode()).hexdigest()
 
 
-def lock(root, lock_file, tests=None):
+def listing_of(path, name):
+    """Whether the cache path of a version listing is the listing of the
+    Maven module `name`, written `org:artifact`."""
+    org, _, artifact = name.partition(":")
+    return f"/{org.replace('.', '/')}/{artifact}/maven-metadata" in path
+
+
+def seed_listings(cache, current, updated):
+    """Places the version listings that the lockfile `current` recorded into
+    the cache of a lock run, so the version ranges of the build resolve as
+    they did. `updated` is None to place every listing, or the `org:artifact`
+    names of the modules whose listings the run reads afresh, which is every
+    module when it is empty. Each listing goes to the cache path the run
+    reads, that of the resolution mirror when one is set, with the hidden
+    `.checked` marker by which coursier counts a download as fresh."""
+    if updated == []:
+        return
+    recorded = [e for e in current.get("artifacts", []) if "contents" in e and coursier_cache.is_version_listing(e["path"])]
+    mirror = resolution_mirror()
+    for name in updated or []:
+        if not any(listing_of(e["path"], name) for e in recorded):
+            log(
+                f"{name} has no version listing in the lockfile: the build gives it no version range, so only an "
+                f"edit of its version in the build moves it"
+            )
+    for entry in recorded:
+        if updated and any(listing_of(entry["path"], name) for name in updated):
+            continue
+        path = entry["path"]
+        central = coursier_cache.cache_path(MAVEN_CENTRAL + "/").removesuffix(".directory")
+        if mirror and path.startswith(central):
+            path = coursier_cache.cache_path(mirror + "/").removesuffix(".directory") + path[len(central) :]
+        target = cache / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(entry["contents"], encoding="utf-8")
+        (target.parent / f".{target.name}.checked").write_bytes(b"")
+
+
+def lock(root, lock_file, tests=None, updated=None):
     """Writes the lockfile. `tests` is the Mill selector of the test tasks
     the lock run runs, or "none"; without it, the lock run uses the
-    selector of the existing lockfile, or every test task."""
+    selector of the existing lockfile, or every test task. `updated` is
+    None to keep the resolution of the existing lockfile, or the modules
+    whose version ranges resolve afresh, as seed_listings takes it."""
     wanted_hash = definition_hash(root)
     try:
-        current = json.loads(lock_file.read_text()) if lock_file.is_file() else {}
-    except ValueError:
+        current = read_lock(root, lock_file, quiet=True) if lock_file.is_file() else {}
+    except Failure as e:
+        if updated is None:
+            log(f"{e.args[0]}; the lock run resolves the build afresh")
         current = {}
     if tests is None:
         tests = current.get("testSelector", DEFAULT_TESTS) if isinstance(current, dict) else DEFAULT_TESTS
@@ -517,6 +570,7 @@ def lock(root, lock_file, tests=None):
     launcher = cache / launcher_path
     log(f"downloading Mill {version} from {url}")
     download(url, launcher)
+    seed_listings(cache, current, updated)
 
     env, jvm = mill_env(cache, state / "lock-archive-cache", state / "lock-home", state / "lock-tmp", offline=False)
     env = mirror_env(env, state)
@@ -680,22 +734,22 @@ CACHE_ATTRIBUTES = (("dependencies", "coursier-cache"), ("archiveCache", "coursi
 def prefetch(root, lock_file):
     """Builds, with Nix, everything the lockfile lists for this system: the
     downloads of the build and of its tests, the JVMs, and what an editor's
-    BSP server needs. The GC roots are links under out/mill-purifier, and
-    out/mill-purifier/prefetch.json records the store paths and the lockfile
-    they were built from, so the mill verb needs neither Nix nor the network
-    while the lockfile stays the same."""
+    BSP server needs. The GC roots are links in .mill-purifier beside the
+    lockfile, and .mill-purifier/prefetch.json records the store paths and
+    the lockfile they were built from, so the mill verb needs neither Nix
+    nor the network while the lockfile stays the same."""
     current = read_lock(root, lock_file)
-    state = root / "out" / "mill-purifier"
+    state = lock_file.parent / PREFETCH_DIR
     built = {attribute: str(nix_build(root, lock_file, state, attribute)) for attribute, _ in CACHE_ATTRIBUTES}
     (state / PREFETCH_STATE).write_text(json.dumps({"contentHash": current["contentHash"], **built}, indent=2) + "\n")
     log(f"prefetched {lock_file} for {nix_system()}; Mill now runs without the network")
     return built
 
 
-def prefetched(root, current):
+def prefetched(lock_file, current):
     """The store paths of the last prefetch, when it was made from the
     lockfile `current` and they still exist; otherwise None."""
-    path = root / "out" / "mill-purifier" / PREFETCH_STATE
+    path = lock_file.parent / PREFETCH_DIR / PREFETCH_STATE
     try:
         state = json.loads(path.read_text())
     except (OSError, ValueError):
@@ -710,7 +764,7 @@ def prefetched(root, current):
 def caches(root, lock_file, current):
     """Writable coursier caches of links into the store, from the last
     prefetch of this lockfile, or from a new prefetch."""
-    state = prefetched(root, current) or prefetch(root, lock_file)
+    state = prefetched(lock_file, current) or prefetch(root, lock_file)
     cache_dir = user_cache(root)
     result = []
     for attribute, name in CACHE_ATTRIBUTES:
@@ -723,7 +777,7 @@ def caches(root, lock_file, current):
     return result
 
 
-def read_lock(root, lock_file):
+def read_lock(root, lock_file, quiet=False):
     if not lock_file.is_file():
         raise Failure(f"{lock_file} does not exist; run `mill-purifier lock` first")
     try:
@@ -739,7 +793,7 @@ def read_lock(root, lock_file):
             f"{lock_file} does not match its contentHash: it was changed after `mill-purifier lock` wrote it. "
             f"Run `mill-purifier lock`."
         )
-    if current.get("definitionHash") != definition_hash(root):
+    if not quiet and current.get("definitionHash") != definition_hash(root):
         log(
             f"the build definition changed since {lock_file} was written. Mill runs from the old lock, so a "
             f"dependency added since then fails to resolve offline: run `mill-purifier lock`."
@@ -845,7 +899,8 @@ def main(argv):
         return 0 if argv else 2
     verb, rest = argv[0], argv[1:]
     root = Path.cwd()
-    lock_file = root / LOCK_FILE
+    named = os.environ.get("MILL_PURIFIER_LOCKFILE")
+    lock_file = Path(named).resolve() if named else root / LOCK_FILE
     # Every verb takes --lockfile <path>, for a lockfile kept outside the
     # build, before its own arguments.
     if rest[:1] == ["--lockfile"]:
@@ -864,6 +919,8 @@ def main(argv):
                 print(__doc__.strip(), file=sys.stderr)
                 return 2
             lock(root, lock_file, tests=tests)
+        elif verb == "update" and not any(":" not in name for name in rest):
+            lock(root, lock_file, updated=rest)
         elif verb == "prefetch" and not rest:
             prefetch(root, lock_file)
             caches(root, lock_file, read_lock(root, lock_file))

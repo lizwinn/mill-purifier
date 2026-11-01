@@ -140,8 +140,24 @@ uses it again, and `tests` runs the test tasks the lock run ran. A test
 that needs tools outside the JVM, such as a Scala Native test that needs
 clang, needs them in the lock run and in the sandbox.
 
+Mill has no lockfile of its own, and a version in `build.mill` names one
+version, except for a version range such as `[2.9.0,2.11.0)`. Coursier
+resolves a range against the version listing of the module
+(`maven-metadata.xml`), and the lockfile records each listing that the
+build needs. `lock` keeps the resolution: the lock run reads the listings
+from the lockfile, so a range resolves as it did. `update` reads them
+afresh and relocks, and with `org:artifact` names it does so only for
+those modules:
+
+```zsh
+mill-purifier update
+mill-purifier update org.typelevel:cats-kernel_3
+```
+
 Every command takes `--lockfile <path>` first, for a lockfile kept outside
-the build.
+the build. Without it, a command reads the environment variable
+`MILL_PURIFIER_LOCKFILE`, so the dev shell of a packaging flake can set it
+to the path the flake passes as `lockFile`.
 
 A Mill daemon keeps the environment it was started with. Stop a daemon
 that plain `./mill` started (`./mill shutdown`) before using
@@ -170,9 +186,9 @@ mill-purifier prefetch
 
 builds, with Nix, everything the lockfile lists for this system: the
 downloads of the build and of its tests, the JVMs, and what an editor's
-build server needs. Their garbage-collector roots are links under
-`out/mill-purifier`, and `out/mill-purifier/prefetch.json` records the
-store paths and the lockfile they were built from. After a prefetch,
+build server needs. Their garbage-collector roots are links in
+`.mill-purifier/` beside the lockfile, and `.mill-purifier/prefetch.json`
+records the store paths and the lockfile they were built from. After a prefetch,
 `mill-purifier mill` needs neither Nix nor the network while the lockfile
 stays the same, so the everyday loop and the editor work with the network
 cut off. `mill-purifier mill` prefetches by itself when no prefetch of the
