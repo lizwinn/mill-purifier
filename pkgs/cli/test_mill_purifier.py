@@ -4,6 +4,7 @@
 Run with `python3 -m unittest test_mill_purifier` from this directory.
 """
 
+import hashlib
 import io
 import json
 import os
@@ -321,7 +322,15 @@ class SeedListingsTest(unittest.TestCase):
     def test_lock_places_every_recorded_listing_as_fresh(self):
         files, markers = self.seeded(None)
         self.assertEqual(files, {self.LISTING: "<metadata>sourcecode</metadata>", self.OTHER: "<metadata>munit</metadata>"})
-        self.assertEqual(markers, [".maven-metadata.xml.checked"] * 2)
+        self.assertEqual(markers, [".maven-metadata.xml.checked"] * 2 + [".maven-metadata.xml.sha1.checked"] * 2)
+
+    def test_the_cache_holds_a_checksum_of_the_placed_listing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp)
+            with mock.patch.dict(os.environ, {"MILL_PURIFIER_MAVEN_CENTRAL_MIRROR": ""}):
+                mp.seed_listings(cache, self.LOCK, None)
+            checksum = (cache / (self.LISTING + ".sha1")).read_text().strip()
+            self.assertEqual(checksum, hashlib.sha1(b"<metadata>sourcecode</metadata>").hexdigest())
 
     def test_update_of_everything_places_none(self):
         self.assertEqual(self.seeded([])[0], {})

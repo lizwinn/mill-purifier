@@ -533,7 +533,14 @@ def seed_listings(cache, current, updated):
         target = cache / path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(entry["contents"], encoding="utf-8")
-        (target.parent / f".{target.name}.checked").write_bytes(b"")
+        # Coursier checks a file against a checksum, and fetches the file
+        # again when the checksum differs from the content. The listing in
+        # the lockfile can be older than the one the repository serves, so
+        # the cache gets a SHA-1 file that matches the listing placed here.
+        checksum = target.parent / f"{target.name}.sha1"
+        checksum.write_text(hashlib.sha1(target.read_bytes()).hexdigest() + "\n")
+        for name in (target.name, checksum.name):
+            (target.parent / f".{name}.checked").write_bytes(b"")
 
 
 def lock(root, lock_file, tests=None, updated=None):

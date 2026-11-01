@@ -261,10 +261,17 @@ It refuses, with the reason in the mechanism:
 - **Downloads that need credentials**: the lockfile records URLs and
   hashes, and no credentials. The build fetches them with credentials
   through `fetchers.fetchurl`, but a lock run cannot record them.
-- **Files a build downloads outside coursier**: Kotlin's documentation
-  tool, Dokka, fetches the package lists of external API documentation;
-  in the sandbox it warns, and the generated documentation has no links to
-  the Java and Kotlin standard library documentation.
+- **Files a build downloads outside coursier**: the lock run records what
+  coursier downloads, so a file that build code fetches with its own HTTP
+  client is in no lockfile. Two such builds are known. Kotlin's
+  documentation tool, Dokka, fetches the package lists of external API
+  documentation; in the sandbox it warns, and the generated documentation
+  has no links to the Java and Kotlin standard library documentation. The
+  build of os-lib defines `os.zip.apacheAntZipOriginalSource`, which
+  downloads `ant-<version>-sources.jar` from Maven Central with
+  `requests.get` and compiles it into the `os.zip` module, which every
+  JVM module of os-lib depends on. Without network access that task
+  fails, so the build fails in `__.compile`, and the lock run stops there.
 - **Systems other than x86_64-linux and aarch64-linux**, for a build that
   asks for a JVM Mill downloads: the lock holds JVM archives for those two.
 - Only modules that extend `PublishModule` become packages: Mill does not
@@ -369,10 +376,12 @@ and reports `no-vcs`, as it does for a source tree without git.
 
 ## Real-world projects
 
-- [os-lib](https://github.com/com-lihaoyi/os-lib) at
-  `8871ab0bda9bbcc4edbef9b1a402eb4c47ef9398`, on Mill 1.3.1: JVM and Scala
-  Native modules cross-built for three Scala versions, the MiMa plugin in
-  the meta-build, and a version from git. Its lock run is pending.
+No real-world project is locked yet. The first candidate was
+[os-lib](https://github.com/com-lihaoyi/os-lib) at commit
+`8871ab0bda9bbcc4edbef9b1a402eb4c47ef9398` on Mill 1.3.1. Its build
+downloads a source jar outside coursier, so this purifier refuses it. The
+reason is under
+[Sources supported and refused](#sources-supported-and-refused).
 
 The fixtures in `tests/fixtures` cover the source kinds above:
 `simple` (a Scala module with an munit suite, on the nixpkgs JDK) and
