@@ -1,62 +1,51 @@
 # buildMillProject: the sandboxed builds of a Mill build, from the lockfile
-# that `mill-purifier lock` writes at the build root.
+# that `mill-purifier lock` writes at the build root. The flake publishes it
+# as `lib.mill-purifier.buildMillProject`:
 #
-# The file is a package for callPackage: the first argument set is what it
-# takes from the package set, and the result is the builder. The
-# mill-purifier overlay (`overlays.default`) adds it to the package set as
-# `buildMillProject`, so a package written for callPackage takes it like
-# any other dependency:
+#   (mill-purifier.lib.mill-purifier.buildMillProject {
+#     inherit pkgs;
+#     src = ./.;
+#   }).packages.core
 #
-#   { buildMillProject }: (buildMillProject { src = ./.; }).packages.core
+# The first argument set is what the library holds (the purifier library);
+# the second is the build. The builder returns
 #
-# and `buildMillProject.override` replaces what it takes from the set. The
-# builder returns
-#
-#   dependencies   the coursier download cache of every locked file
-#   archiveCache   the coursier archive cache: the locked archives (JDKs),
-#                  unpacked and patched for Nix
 #   packages.<id>  the published artifacts of the Mill module <id> (its
 #                  module path, such as `core` or `foo.bar`), in Maven
 #                  layout
-#   publishBuild   a Mill build whose `publishArtifacts` tasks return the
-#                  files of the packages, for Mill's publishers
-#   repository     every package published by Mill's own Maven publisher
-#                  (mill.javalib.MavenPublishModule) into a Maven repository
+#   tests          the test tasks the lock run ran, run in the sandbox
+#   release        every package published by Mill's own Maven publisher
+#                  (mill.javalib.MavenPublishModule) into a Maven
+#                  repository: what `mill-purifier publish` uploads
+#   fetches        the purifier library entries the build fetches, for this
+#                  system
 #   runTask        runTask name [ args ]: a derivation that runs Mill with
 #                  `args` offline in the sandbox, such as [ "core.run" ],
 #                  with what Mill prints in `out`
+#   publishBuild   a Mill build whose `publishArtifacts` tasks return the
+#                  files of the packages, for Mill's publishers
+#   dependencies   the coursier download cache of the fetches
+#   archiveCache   the coursier archive cache: the locked archives (JDKs),
+#                  unpacked and patched for Nix
+#   lock           the lockfile, as lock.nix reads it
 #   jdk            the JDK that runs Mill
+{ purifier }:
 {
-  lib,
-  stdenvNoCC,
-  runCommand,
-  callPackage,
-  jq,
-  strip-nondeterminism,
-  # The JDKs a build can run on; the default JDK of a build is the headless
-  # one of the major version its lock was made with.
-  javaPackages,
-  # The purifier library (`lib.purifier` of nix-purifiers/purifier), which
-  # fetches the locked downloads and lays them out; the package overlay
-  # passes it.
-  purifier,
-}:
-{
+  # The package set the build runs in.
+  pkgs,
   # The root of the Mill build.
   src,
+  # The fetchers of the purifier library (fetchEntry and tree), such as a
+  # `fetchurl` with credentials or a company mirror. The default is
+  # nixpkgs' own.
+  fetchers ? { },
   # The lockfile; the default is the one `mill-purifier lock` writes at the
   # build root.
   lockFile ? src + "/mill-purifier.lock.json",
   # The JDK that runs Mill's launcher, and Mill's daemon when the build sets
-  # `mill-jvm-version: system`.
+  # `mill-jvm-version: system`. The default is the JDK of the lock run
+  # (nix/lib/jdk.nix).
   jdk ? null,
-  # Replaces nixpkgs' fetchurl for the locked downloads, such as a fetchurl
-  # with credentials. It takes the arguments the purifier library passes to
-  # nixpkgs' fetchurl.
-  fetchurl ? null,
-  # Runs the tests of each module (the `testForked` tasks the lock recorded
-  # under the module) in its package build.
-  doCheck ? false,
   # The git commit the source is of, for a build that computes its version
   # from git (Mill's VcsVersion): { rev, revCount, tag, commitsSinceTag }.
   # A flake passes { inherit (self) rev revCount; } and, at or after a tag,
@@ -72,6 +61,14 @@
   checkLock ? true,
 }:
 let
+  inherit (pkgs)
+    lib
+    stdenvNoCC
+    runCommand
+    jq
+    strip-nondeterminism
+    ;
+
   lock' = import ./lock.nix { inherit lockFile; };
   definition = import ./definition-hash.nix src;
   lock =
@@ -100,19 +97,32 @@ let
     filter = if srcFilter != null then srcFilter else defaultSrcFilter;
   };
 
-  defaultJdk =
-    javaPackages.compiler."openjdk${lock.javaVersion}".headless
-      or (throw "mill-purifier: javaPackages has no openjdk${lock.javaVersion} for the Java ${lock.javaVersion} the lock was made with; pass `jdk`.");
-  jdk' = if jdk != null then jdk else defaultJdk;
+  jdk' = if jdk != null then jdk else import ./jdk.nix pkgs;
 
-  # callPackage passes nixpkgs' fetchurl unless the caller gave another.
-  fetchArgs = {
-    inherit lockFile purifier;
+  # The Mill version the build pins, and the launcher of it, which the lock
+  # run downloaded from Maven Central to this place in the coursier cache.
+  millVersion = import ./mill-version.nix src;
+  launcher = "https/repo1.maven.org/maven2/com/lihaoyi/mill-dist/${millVersion}/mill-dist-${millVersion}.exe";
+
+  platform = lock.platform pkgs.stdenv.hostPlatform.system;
+  fetches = lock.artifacts ++ platform.artifacts;
+  fetcherArgs = {
+    inherit pkgs;
   }
-  // lib.optionalAttrs (fetchurl != null) { inherit fetchurl; };
-  dependencies = callPackage ./dependencies.nix fetchArgs;
-  archiveCache = callPackage ./archive-cache.nix fetchArgs;
-  gitShim = if git == null then null else callPackage ./git-shim.nix { } git;
+  // fetchers;
+
+  dependencies = purifier.tree (
+    fetcherArgs
+    // {
+      name = "mill-coursier-cache";
+      entries = fetches;
+    }
+  );
+  archiveCache = import ./archive-cache.nix {
+    inherit pkgs platform;
+    fetchEntry = purifier.fetchEntry fetcherArgs;
+  };
+  gitShim = if git == null then null else import ./git-shim.nix { inherit lib pkgs; } git;
 
   # The Mill invocation shared by every build from the lock;
   # `mill-purifier lock` runs Mill the same way, so a lock made from it holds
@@ -122,8 +132,8 @@ let
     (
     export HOME="$TMPDIR/home"
     export XDG_RUNTIME_DIR="$TMPDIR/run"
-    export XDG_CACHE_HOME="$HOME/.cache" XDG_CONFIG_HOME="$HOME/.config"
-    export XDG_DATA_HOME="$HOME/.local/share" XDG_STATE_HOME="$HOME/.local/state"
+    export XDG_CACHE_HOME="$HOME/cache" XDG_CONFIG_HOME="$HOME/config"
+    export XDG_DATA_HOME="$HOME/data" XDG_STATE_HOME="$HOME/state"
     export COURSIER_CACHE="$TMPDIR/coursier-cache"
     export COURSIER_ARCHIVE_CACHE="$TMPDIR/coursier-archive-cache"
     export COURSIER_MODE=offline
@@ -140,10 +150,10 @@ let
       cp -rs --no-preserve=mode ${dependencies}/. "$COURSIER_CACHE"
       cp -rs --no-preserve=mode ${archiveCache}/. "$COURSIER_ARCHIVE_CACHE"
     fi
-    java $JAVA_OPTS -jar "$COURSIER_CACHE/${lock.launcher}" \
+    java $JAVA_OPTS -jar "$COURSIER_CACHE/${launcher}" \
       --no-daemon --ticker false ${args} </dev/null || {
       echo "mill-purifier: Mill failed in the Nix sandbox, offline, with only the downloads of the lockfile." >&2
-      echo "mill-purifier: if it reports a file it could not find or download, the lockfile lacks it: run \`mill-purifier lock\` (or \`mill-purifier relock\`) in the build root and commit the lockfile." >&2
+      echo "mill-purifier: if it reports a file it could not find or download, the lockfile lacks it: run \`mill-purifier lock\` in the build root and commit the lockfile." >&2
       exit 1
     }
     )'';
@@ -155,9 +165,6 @@ let
 
   mkPackage =
     project:
-    let
-      tests = lib.filter (t: lib.hasPrefix "${project.id}." t) lock.testTasks;
-    in
     stdenvNoCC.mkDerivation (finalAttrs: {
       inherit (project) name;
       src = filteredSrc;
@@ -180,9 +187,6 @@ let
             ]
           )
         } > "$TMPDIR/publish.json"
-        ${lib.optionalString (doCheck && tests != [ ]) (
-          runMill (lib.escapeShellArgs (lib.intersperse "+" tests))
-        )}
         runHook postBuild
       '';
       installPhase = ''
@@ -221,7 +225,6 @@ let
         runHook postInstall
       '';
       passthru = {
-        inherit dependencies lock;
         millProject = project;
         # The artifact files of the package by key, such as
         # artifacts."core_3-sources.jar". They are known from the lock
@@ -233,10 +236,36 @@ let
           }) project.artifacts
         );
       };
-      meta.description = "${project.organization}:${project.name}, built by mill-purifier";
+      meta.description = "${project.name}, built by mill-purifier";
     });
 
   packages = builtins.mapAttrs (_: mkPackage) lock.projectsById;
+
+  runTask =
+    name: args:
+    stdenvNoCC.mkDerivation {
+      inherit name;
+      src = filteredSrc;
+      nativeBuildInputs = [ jdk' ];
+      dontConfigure = true;
+      dontFixup = true;
+      buildPhase = ''
+        runHook preBuild
+        ${runMill (lib.escapeShellArgs args)} > "$TMPDIR/stdout"
+        runHook postBuild
+      '';
+      installPhase = ''
+        cp "$TMPDIR/stdout" $out
+      '';
+    };
+
+  # The test tasks the lock run ran (`testTasks`), in one Mill run. A build
+  # whose lock ran no tests has an empty test run.
+  tests =
+    if lock.testTasks == [ ] then
+      runCommand "mill-tests" { } "echo 'the lock ran no test tasks' > $out"
+    else
+      runTask "mill-tests" (lib.intersperse "+" lock.testTasks);
 
   # A Mill build with one module per package, whose `publishArtifacts` task
   # returns the files of the package. Mill's publishers take the tasks to
@@ -252,7 +281,7 @@ let
       ''
         mkdir -p $out
         {
-          echo '//| mill-version: ${lock.millVersion}'
+          echo '//| mill-version: ${millVersion}'
           echo '//| mill-jvm-version: system'
           echo 'package build'
           echo 'import mill.*, mill.javalib.*, mill.javalib.publish.*'
@@ -273,9 +302,10 @@ let
 
   # Mill's MavenPublishModule publishes publishBuild into a file:
   # repository, offline: the lock run publishes the same way once, so the
-  # publisher's dependencies are in the lock.
-  repository = stdenvNoCC.mkDerivation {
-    name = "mill-repository";
+  # publisher's dependencies are in the lock. The publisher wants a user
+  # name and a password even for a file: repository, and reads neither.
+  release = stdenvNoCC.mkDerivation {
+    name = "mill-release";
     src = publishBuild;
     nativeBuildInputs = [ jdk' ];
     dontConfigure = true;
@@ -283,7 +313,8 @@ let
     buildPhase = ''
       runHook preBuild
       chmod -R u+w .
-      export MILL_MAVEN_USERNAME=local MILL_MAVEN_PASSWORD=local
+      export MILL_MAVEN_USERNAME=mill-purifier
+      export MILL_MAVEN_PASSWORD="$MILL_MAVEN_USERNAME"
       ${runMill ''
         mill.javalib.MavenPublishModule/publishAll \
           --publishArtifacts __.publishArtifacts \
@@ -292,33 +323,18 @@ let
     '';
     dontInstall = true;
   };
-  runTask =
-    name: args:
-    stdenvNoCC.mkDerivation {
-      inherit name;
-      src = filteredSrc;
-      nativeBuildInputs = [ jdk' ];
-      dontConfigure = true;
-      dontFixup = true;
-      buildPhase = ''
-        runHook preBuild
-        ${runMill (lib.escapeShellArgs args)} > "$TMPDIR/stdout"
-        runHook postBuild
-      '';
-      installPhase = ''
-        cp "$TMPDIR/stdout" $out
-      '';
-    };
 in
 {
   inherit
     lock
+    packages
+    tests
+    release
+    fetches
+    runTask
+    publishBuild
     dependencies
     archiveCache
-    packages
-    publishBuild
-    repository
-    runTask
     ;
   jdk = jdk';
 }

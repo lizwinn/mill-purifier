@@ -9,8 +9,10 @@
   makeWrapper,
   python3,
   curl,
-  jdk21_headless,
-  jdk ? jdk21_headless,
+  pkgs,
+  # The JDK the lock run runs Mill's launcher on, which the builds of
+  # buildMillProject also take (nix/lib/jdk.nix).
+  jdk ? import ../../nix/lib/jdk.nix pkgs,
   # The source of the nix-purifiers/purifier flake, whose default.nix the
   # command's builds import; the package overlay passes it.
   purifierSource ? null,

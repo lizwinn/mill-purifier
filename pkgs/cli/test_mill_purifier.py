@@ -173,16 +173,16 @@ class JvmIndexTest(unittest.TestCase):
                 platforms, specific = mp.lock_platforms([own_jar, own_pom, archive, other_library], [archive], cache, state)
 
             self.assertEqual(specific, {own_jar, own_pom, archive})
-            self.assertEqual(platforms["x86_64-linux"]["archives"], [archive])
+            self.assertEqual(sorted(e["path"] for e in platforms["x86_64-linux"]["artifacts"]), sorted([own_jar, own_pom, archive]))
             arm = platforms["aarch64-linux"]
-            self.assertEqual(arm["archives"], [coursier_cache.cache_path("https://cdn.azul.com/zulu/bin/zulu17-linux_aarch64.tar.gz")])
+            arm_archive = coursier_cache.cache_path("https://cdn.azul.com/zulu/bin/zulu17-linux_aarch64.tar.gz")
             self.assertEqual(
                 sorted(e["path"] for e in arm["artifacts"]),
-                sorted([*mp.jvm_index_files("linux-arm64", "0.0.4"), *arm["archives"]]),
+                sorted([*mp.jvm_index_files("linux-arm64", "0.0.4"), arm_archive]),
             )
-            # Maven Central entries name the mirror.
-            index_entry = next(e for e in arm["artifacts"] if e["path"].endswith(".jar"))
-            self.assertEqual(index_entry["mirrors"], [mp.MAVEN_CENTRAL_MIRROR + index_entry["url"][len(mp.MAVEN_CENTRAL) :]])
+            # An entry records only what the lock run observed; Nix derives
+            # the URL and the mirrors from the path.
+            self.assertEqual({tuple(sorted(e)) for e in arm["artifacts"]}, {("hash", "path")})
 
     def test_lock_platforms_without_an_index(self):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(mp, "nix_system", return_value="x86_64-linux"):
@@ -210,6 +210,11 @@ class MirrorTest(unittest.TestCase):
                 self.assertEqual(mp.mirror_env({"A": "b"}, Path(tmp)), {"A": "b"})
 
 
+def sealed(lock_data):
+    """A lockfile with the content hash `mill-purifier lock` writes."""
+    return json.dumps({**lock_data, "contentHash": mp.content_hash(lock_data)})
+
+
 class ReadLockTest(unittest.TestCase):
     def build(self, tmp, lock_text):
         root = Path(tmp)
@@ -217,36 +222,94 @@ class ReadLockTest(unittest.TestCase):
         write(root, mp.LOCK_FILE, lock_text)
         return root
 
+    def read(self, root):
+        return mp.read_lock(root, root / mp.LOCK_FILE)
+
     def test_missing_lockfile(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             write(root, "build.mill", "")
             with self.assertRaisesRegex(mp.Failure, "mill-purifier lock"):
-                mp.read_lock(root)
+                self.read(root)
 
     def test_invalid_json(self):
         with tempfile.TemporaryDirectory() as tmp:
-            with self.assertRaisesRegex(mp.Failure, "not valid JSON.*relock"):
-                mp.read_lock(self.build(tmp, "{"))
+            with self.assertRaisesRegex(mp.Failure, "not valid JSON.*mill-purifier lock"):
+                self.read(self.build(tmp, "{"))
 
     def test_not_a_lockfile(self):
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaisesRegex(mp.Failure, "not a mill-purifier lockfile"):
-                mp.read_lock(self.build(tmp, '{"version": 1}'))
+                self.read(self.build(tmp, '{"version": 2}'))
 
     def test_other_format_version(self):
         with tempfile.TemporaryDirectory() as tmp:
-            text = json.dumps({"version": 0, "launcher": "x", "artifacts": []})
+            text = sealed({"version": 0, "definitionHash": "x", "artifacts": []})
             with self.assertRaisesRegex(mp.Failure, "format version 0"):
-                mp.read_lock(self.build(tmp, text))
+                self.read(self.build(tmp, text))
+
+    def test_tampered_lockfile(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            lock_data = json.loads(sealed({"version": mp.LOCK_VERSION, "definitionHash": "x", "artifacts": []}))
+            lock_data["artifacts"] = [{"path": "a", "url": "https://a", "mirrors": [], "hash": "sha256-x"}]
+            with self.assertRaisesRegex(mp.Failure, "contentHash.*mill-purifier lock"):
+                self.read(self.build(tmp, json.dumps(lock_data)))
 
     def test_stale_lock_warns_with_the_command(self):
         with tempfile.TemporaryDirectory() as tmp:
-            text = json.dumps({"version": mp.LOCK_VERSION, "launcher": "x", "artifacts": [], "definitionHash": "sha256:0"})
+            text = sealed({"version": mp.LOCK_VERSION, "artifacts": [], "definitionHash": "sha256:0"})
             err = io.StringIO()
             with redirect_stderr(err):
-                mp.read_lock(self.build(tmp, text))
+                self.read(self.build(tmp, text))
             self.assertIn("run `mill-purifier lock`", err.getvalue())
+
+    def test_lockfile_outside_the_build(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp, "build")
+            write(root, "build.mill", "")
+            outside = write(tmp, "locks/mill-purifier.lock.json", sealed({"version": mp.LOCK_VERSION, "definitionHash": "x", "artifacts": []}))
+            with redirect_stderr(io.StringIO()):
+                self.assertEqual(mp.read_lock(root, outside)["definitionHash"], "x")
+
+
+class ContentHashTest(unittest.TestCase):
+    def test_matches_the_nix_listing(self):
+        # builtins.toJSON writes sorted keys with no spaces.
+        listing = '{"a":[1,{"b":"é"}],"version":2}'
+        import hashlib
+
+        expected = "sha256:" + hashlib.sha256(listing.encode()).hexdigest()
+        self.assertEqual(mp.content_hash({"version": 2, "a": [1, {"b": "é"}], "contentHash": "old"}), expected)
+
+
+class PrefetchStateTest(unittest.TestCase):
+    def test_prefetched_needs_the_same_lockfile_and_store_paths(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = Path(tmp, "store")
+            (store / "deps").mkdir(parents=True)
+            (store / "archives").mkdir()
+            state = {"contentHash": "sha256:1", "dependencies": str(store / "deps"), "archiveCache": str(store / "archives")}
+            write(root, "out/mill-purifier/prefetch.json", json.dumps(state))
+            self.assertEqual(mp.prefetched(root, {"contentHash": "sha256:1"})["dependencies"], str(store / "deps"))
+            self.assertIsNone(mp.prefetched(root, {"contentHash": "sha256:2"}))
+            (store / "archives").rmdir()
+            self.assertIsNone(mp.prefetched(root, {"contentHash": "sha256:1"}))
+
+
+class RunWatchingTest(unittest.TestCase):
+    def test_names_the_lock_command_after_a_resolution_failure(self):
+        import sys
+
+        cmd = [sys.executable, "-c", "import sys; print('Resolution failed for 1 modules', file=sys.stderr); sys.exit(1)"]
+        err = io.BytesIO()
+        fake_stderr = mock.Mock(buffer=err)
+        with mock.patch("sys.stdout.isatty", return_value=False), mock.patch.object(mp.sys, "stderr", fake_stderr):
+            code = mp.run_watching(cmd, dict(os.environ))
+        self.assertEqual(code, 1)
+        self.assertIn(b"Resolution failed", err.getvalue())
+        fake_stderr.write.assert_called()
+        self.assertIn("mill-purifier lock", "".join(c.args[0] for c in fake_stderr.write.call_args_list))
 
 
 FAKE_BSP_SERVER = r"""

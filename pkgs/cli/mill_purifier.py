@@ -2,26 +2,31 @@
 """mill-purifier: locks the downloads of a Mill build and runs Mill on them.
 
   mill-purifier lock [--tests SELECTOR]
-                              writes mill-purifier.lock.json at the build
-                              root, unless the build definition is unchanged
-                              since the lockfile was written. The lock run
-                              runs the test tasks SELECTOR names (`none` for
-                              none); the default is the selector of the
-                              existing lockfile, or __.testForked
-  mill-purifier relock [--tests SELECTOR]
-                              writes the lockfile regardless
+                              runs Mill with an empty cache and writes
+                              mill-purifier.lock.json at the build root. The
+                              lock run runs the test tasks SELECTOR names
+                              (`none` for none); the default is the selector
+                              of the existing lockfile, or __.testForked
+  mill-purifier prefetch      builds everything the lockfile lists for this
+                              system with Nix, under GC roots in
+                              out/mill-purifier, so Mill and editors then
+                              run without the network
   mill-purifier mill ARGS...  runs Mill offline, from the locked downloads
   mill-purifier publish PUBLISHER ARGS...
                               builds the packages with Nix and runs a Mill
                               publisher on what Nix built, such as
                               mill.javalib.SonatypeCentralPublishModule/
 
+Every verb takes `--lockfile PATH` first, for a lockfile kept outside the
+build.
+
 The command runs from the root of the Mill build (the directory with
 build.mill or build.mill.yaml). Its Nix package sets MILL_PURIFIER_JDK (the
-JDK that runs Mill's launcher), MILL_PURIFIER_LIB (the Nix library) and
-MILL_PURIFIER_NIXPKGS (the nixpkgs the library builds with), and puts curl
-in PATH. The mill and publish verbs run the nix-build command of the Nix
-installation in PATH.
+JDK that runs Mill's launcher), MILL_PURIFIER_LIB (the Nix library),
+MILL_PURIFIER_NIXPKGS (the nixpkgs the library builds with) and
+MILL_PURIFIER_PURIFIER_SOURCE (the purifier library), and puts curl in
+PATH. prefetch and publish, and mill before a prefetch, run the nix-build
+command of the Nix installation in PATH.
 """
 
 import hashlib
@@ -38,7 +43,7 @@ from pathlib import Path
 
 import coursier_cache
 
-LOCK_VERSION = 1
+LOCK_VERSION = 2
 LOCK_FILE = "mill-purifier.lock.json"
 ROOT_BUILD_FILES = ("build.mill.yaml", "build.mill")
 MAVEN_CENTRAL = "https://repo1.maven.org/maven2"
@@ -142,16 +147,18 @@ def jdk_home():
     return Path(home)
 
 
-def java_major(jdk):
-    release = (jdk / "release").read_text() if (jdk / "release").is_file() else ""
-    m = re.search(r'JAVA_VERSION="(\d+)', release)
-    if not m:
-        raise Failure(f"cannot read the Java version of {jdk}")
-    return m.group(1)
-
-
 def launcher_url(version):
     return f"{MAVEN_CENTRAL}/com/lihaoyi/mill-dist/{version}/mill-dist-{version}.exe"
+
+
+def launcher_cache_path(root):
+    """The place in the coursier cache of the launcher of the Mill version
+    the build pins, where the lock run downloaded it (nix/lib/mill-version.nix
+    derives the same)."""
+    version = mill_config(root, "mill-version")
+    if not version:
+        raise Failure("the build does not pin a Mill version; set `//| mill-version: <version>` in build.mill or write .mill-version")
+    return coursier_cache.cache_path(launcher_url(version))
 
 
 def mill_env(cache, archive_cache, home, tmp, offline):
@@ -254,8 +261,11 @@ MIRRORS = {MAVEN_CENTRAL: [MAVEN_CENTRAL_MIRROR]}
 
 
 def lock_entries(cache, paths):
-    """The lock entries of `paths` in `cache`, with their mirrors."""
-    return coursier_cache.entries(cache, paths, mirrors=MIRRORS)
+    """The lock entries of `paths` in `cache`, as the lockfile records them:
+    { path, hash }. A URL follows from its cache path, and the mirrors of
+    Maven Central from the URL, so nix/lib/lock.nix derives both, and the
+    lockfile holds only what the lock run observed."""
+    return [{"path": e["path"], "hash": e["hash"]} for e in coursier_cache.entries(cache, paths, mirrors=MIRRORS)]
 
 
 def mirror_env(env, state):
@@ -307,7 +317,7 @@ def lock_platforms(kept, archives, cache, state):
     own_files = jvm_index_files(own_platform, index_version)
     index = read_jvm_index(cache / own_files[0], own_platform)
     jvms = jvms_of(index, [coursier_cache.url_of(a) for a in archives])
-    platforms = {own: {"artifacts": lock_entries(cache, [*own_files, *archives]), "archives": archives}}
+    platforms = {own: {"artifacts": lock_entries(cache, [*own_files, *archives])}}
     for system, index_platform in sorted(JVM_INDEX_PLATFORMS.items()):
         if system == own:
             continue
@@ -330,7 +340,6 @@ def lock_platforms(kept, archives, cache, state):
             other_archives.append(path)
         platforms[system] = {
             "artifacts": lock_entries(platform_cache, [*files, *other_archives]),
-            "archives": other_archives,
         }
     return platforms, set(own_files) | set(archives)
 
@@ -400,6 +409,9 @@ class Bsp:
         finally:
             if self.proc.poll() is None:
                 self.proc.kill()
+                self.proc.wait()
+            self.proc.stdin.close()
+            self.proc.stdout.close()
 
 
 def lock_editor_support(work, env, jvm, launcher):
@@ -466,26 +478,26 @@ def offline_check(root, state, kept, cache, launcher_path):
 DEFAULT_TESTS = "__.testForked"
 
 
-def lock(root, force, tests=None):
+def content_hash(lock_data):
+    """The hash of a lockfile's content: the SHA-256 of the lockfile without
+    `contentHash`, as compact JSON with sorted keys, which is what Nix's
+    builtins.toJSON writes, so nix/lib/lock.nix computes the same value."""
+    rest = {k: v for k, v in lock_data.items() if k != "contentHash"}
+    text = json.dumps(rest, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return "sha256:" + hashlib.sha256(text.encode()).hexdigest()
+
+
+def lock(root, lock_file, tests=None):
     """Writes the lockfile. `tests` is the Mill selector of the test tasks
     the lock run runs, or "none"; without it, the lock run uses the
     selector of the existing lockfile, or every test task."""
-    lock_file = root / LOCK_FILE
     wanted_hash = definition_hash(root)
     try:
         current = json.loads(lock_file.read_text()) if lock_file.is_file() else {}
     except ValueError:
         current = {}
     if tests is None:
-        tests = current.get("testSelector", DEFAULT_TESTS)
-    if (
-        not force
-        and current.get("version") == LOCK_VERSION
-        and current.get("definitionHash") == wanted_hash
-        and current.get("testSelector", DEFAULT_TESTS) == tests
-    ):
-        log(f"{LOCK_FILE} is up to date; `mill-purifier relock` writes it regardless")
-        return
+        tests = current.get("testSelector", DEFAULT_TESTS) if isinstance(current, dict) else DEFAULT_TESTS
 
     version = mill_config(root, "mill-version")
     if not version:
@@ -528,7 +540,6 @@ def lock(root, force, tests=None):
             projects.append(
                 {
                     "id": task[: -len(".publishArtifacts")],
-                    "organization": meta["group"],
                     "name": meta["id"],
                     "artifacts": [{"key": k} for k in keys],
                 }
@@ -585,9 +596,6 @@ def lock(root, force, tests=None):
 
     result = {
         "version": LOCK_VERSION,
-        "millVersion": version,
-        "javaVersion": java_major(jdk_home()),
-        "launcher": launcher_path,
         "definitionHash": wanted_hash,
         "projects": projects,
         "testSelector": tests,
@@ -595,14 +603,15 @@ def lock(root, force, tests=None):
         "platforms": platforms,
         "artifacts": lock_entries(cache, kept) + inline,
     }
+    result["contentHash"] = content_hash(result)
     lock_file.write_text(json.dumps(result, indent=2) + "\n")
-    log(f"wrote {LOCK_FILE}")
+    log(f"wrote {lock_file}")
 
 
-# --- mill (interactive) ---------------------------------------------------
+# --- prefetch, mill and publish -------------------------------------------
 
 
-def nix_build(root, state, attribute):
+def nix_build(root, lock_file, state, attribute):
     """Builds an attribute of buildMillProject for the build at `root` (see
     nix/lib/cli.nix) and returns its store path. The result link under
     `state` is the GC root that keeps it."""
@@ -622,6 +631,7 @@ def nix_build(root, state, attribute):
             "--arg", "nixpkgs", nixpkgs,
             "--arg", "purifierSource", purifier_source,
             "--argstr", "src", str(root.resolve()),
+            "--argstr", "lockFile", str(lock_file.resolve()),
             "-A", attribute,
             "--out-link", str(state / f"{attribute}-root"),
         ],
@@ -630,8 +640,8 @@ def nix_build(root, state, attribute):
     )
     if built.returncode != 0:
         raise Failure(
-            f"nix-build could not build {attribute} from {LOCK_FILE}. A `hash mismatch` above means a download "
-            f"no longer matches its hash in the lockfile, as after a hand edit: run `mill-purifier relock`."
+            f"nix-build could not build {attribute} from {lock_file}. A `hash mismatch` above means a download "
+            f"no longer matches its hash in the lockfile: run `mill-purifier lock`."
         )
     return Path(built.stdout.strip().splitlines()[-1])
 
@@ -663,37 +673,75 @@ def user_cache(root):
     return base / "mill-purifier" / key
 
 
-def realize(root, state):
-    """Builds the locked downloads and archives with Nix (their GC roots are
-    links under `state`) and returns writable coursier caches of links to
-    them."""
-    caches = []
+PREFETCH_STATE = "prefetch.json"
+CACHE_ATTRIBUTES = (("dependencies", "coursier-cache"), ("archiveCache", "coursier-archive-cache"))
+
+
+def prefetch(root, lock_file):
+    """Builds, with Nix, everything the lockfile lists for this system: the
+    downloads of the build and of its tests, the JVMs, and what an editor's
+    BSP server needs. The GC roots are links under out/mill-purifier, and
+    out/mill-purifier/prefetch.json records the store paths and the lockfile
+    they were built from, so the mill verb needs neither Nix nor the network
+    while the lockfile stays the same."""
+    current = read_lock(root, lock_file)
+    state = root / "out" / "mill-purifier"
+    built = {attribute: str(nix_build(root, lock_file, state, attribute)) for attribute, _ in CACHE_ATTRIBUTES}
+    (state / PREFETCH_STATE).write_text(json.dumps({"contentHash": current["contentHash"], **built}, indent=2) + "\n")
+    log(f"prefetched {lock_file} for {nix_system()}; Mill now runs without the network")
+    return built
+
+
+def prefetched(root, current):
+    """The store paths of the last prefetch, when it was made from the
+    lockfile `current` and they still exist; otherwise None."""
+    path = root / "out" / "mill-purifier" / PREFETCH_STATE
+    try:
+        state = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    if state.get("contentHash") != current["contentHash"]:
+        return None
+    if not all(Path(state.get(a, "")).is_dir() for a, _ in CACHE_ATTRIBUTES):
+        return None
+    return state
+
+
+def caches(root, lock_file, current):
+    """Writable coursier caches of links into the store, from the last
+    prefetch of this lockfile, or from a new prefetch."""
+    state = prefetched(root, current) or prefetch(root, lock_file)
     cache_dir = user_cache(root)
-    for attribute, name in (("dependencies", "coursier-cache"), ("archiveCache", "coursier-archive-cache")):
-        built = nix_build(root, state, attribute)
+    result = []
+    for attribute, name in CACHE_ATTRIBUTES:
+        built = state[attribute]
         stamp = cache_dir / f"{name}.source"
-        if not ((cache_dir / name).is_dir() and stamp.is_file() and stamp.read_text() == str(built)):
-            link_tree(built, cache_dir / name)
-            stamp.write_text(str(built))
-        caches.append(cache_dir / name)
-    return caches
+        if not ((cache_dir / name).is_dir() and stamp.is_file() and stamp.read_text() == built):
+            link_tree(Path(built), cache_dir / name)
+            stamp.write_text(built)
+        result.append(cache_dir / name)
+    return result
 
 
-def read_lock(root):
-    lock_file = root / LOCK_FILE
+def read_lock(root, lock_file):
     if not lock_file.is_file():
-        raise Failure(f"{root} has no {LOCK_FILE}; run `mill-purifier lock` first")
+        raise Failure(f"{lock_file} does not exist; run `mill-purifier lock` first")
     try:
         current = json.loads(lock_file.read_text())
     except ValueError as e:
-        raise Failure(f"{LOCK_FILE} is not valid JSON ({e}); run `mill-purifier relock`") from None
-    if not isinstance(current, dict) or "launcher" not in current or "artifacts" not in current:
-        raise Failure(f"{LOCK_FILE} is not a mill-purifier lockfile; run `mill-purifier relock`")
+        raise Failure(f"{lock_file} is not valid JSON ({e}); run `mill-purifier lock`") from None
+    if not isinstance(current, dict) or "definitionHash" not in current or "artifacts" not in current:
+        raise Failure(f"{lock_file} is not a mill-purifier lockfile; run `mill-purifier lock`")
     if current.get("version") != LOCK_VERSION:
-        raise Failure(f"{LOCK_FILE} has lock format version {current.get('version')}; run `mill-purifier relock`")
+        raise Failure(f"{lock_file} has lock format version {current.get('version')}; run `mill-purifier lock`")
+    if current.get("contentHash") != content_hash(current):
+        raise Failure(
+            f"{lock_file} does not match its contentHash: it was changed after `mill-purifier lock` wrote it. "
+            f"Run `mill-purifier lock`."
+        )
     if current.get("definitionHash") != definition_hash(root):
         log(
-            f"the build definition changed since {LOCK_FILE} was written. Mill runs from the old lock, so a "
+            f"the build definition changed since {lock_file} was written. Mill runs from the old lock, so a "
             f"dependency added since then fails to resolve offline: run `mill-purifier lock`."
         )
     return current
@@ -717,28 +765,67 @@ def mill_executable(root):
     return script
 
 
-def interactive(root, args):
-    current = read_lock(root)
+# What Mill prints when coursier cannot resolve a dependency, which offline
+# means that the lockfile lacks it.
+RESOLUTION_FAILURES = (b"Resolution failed", b"CantDownloadModule", b"Error downloading")
+MISSING_HINT = "Mill could not resolve a dependency offline, so the lockfile lacks it: run `mill-purifier lock`."
+
+
+def run_watching(cmd, env):
+    """Runs Mill and returns its exit code. Mill keeps its terminal: at a
+    terminal it runs in a pseudo-terminal, otherwise its error output passes
+    through line by line. When Mill reports a resolution failure, the command
+    names `mill-purifier lock` after it."""
+    seen = []
+
+    def watch(data):
+        if any(marker in data for marker in RESOLUTION_FAILURES):
+            seen.append(True)
+        return data
+
+    if sys.stdout.isatty() and sys.stdin.isatty():
+        import pty
+
+        os.environ.clear()
+        os.environ.update(env)
+        status = pty.spawn(cmd, lambda fd: watch(os.read(fd, 1 << 16)))
+        code = os.waitstatus_to_exitcode(status)
+    else:
+        proc = subprocess.Popen(cmd, env=env, stderr=subprocess.PIPE)
+        for line in proc.stderr:
+            sys.stderr.buffer.write(watch(line))
+            sys.stderr.buffer.flush()
+        code = proc.wait()
+    if seen:
+        log(MISSING_HINT)
+    return code
+
+
+def interactive(root, lock_file, args):
+    current = read_lock(root, lock_file)
     state = root / "out" / "mill-purifier"
-    cache, archive_cache = realize(root, state)
+    cache, archive_cache = caches(root, lock_file, current)
     (state / "tmp").mkdir(parents=True, exist_ok=True)
     env, jvm = mill_env(cache, archive_cache, None, state / "tmp", offline=True)
     env["MILL_EXECUTABLE_PATH"] = str(mill_executable(root))
-    cmd = mill_command(cache / current["launcher"], jvm, args)
-    os.execve(cmd[0], cmd, env)
+    cmd = mill_command(cache / launcher_cache_path(root), jvm, args)
+    if "--bsp" in args:
+        # An editor speaks JSON-RPC over standard input and output.
+        os.execve(cmd[0], cmd, env)
+    return run_watching(cmd, env)
 
 
-def publish(root, args):
+def publish(root, lock_file, args):
     """Runs the Mill publisher command `args` on the files Nix built: on the
     publish build of buildMillProject, whose `publishArtifacts` tasks return
     them. Resolution runs online, since a publisher can need dependencies
     the lock run did not use; it starts from the locked downloads."""
     if not args:
         raise Failure("name a Mill publisher, such as `mill-purifier publish mill.javalib.SonatypeCentralPublishModule/`")
-    current = read_lock(root)
+    current = read_lock(root, lock_file)
     state = root / "out" / "mill-purifier"
-    cache, archive_cache = realize(root, state)
-    publish_build = nix_build(root, state, "publishBuild")
+    cache, archive_cache = caches(root, lock_file, current)
+    publish_build = nix_build(root, lock_file, state, "publishBuild")
     work = state / "publish-run"
     shutil.rmtree(work, ignore_errors=True)
     shutil.copytree(publish_build, work)
@@ -748,7 +835,7 @@ def publish(root, args):
     env, jvm = mill_env(cache, archive_cache, None, state / "tmp", offline=False)
     if "--publishArtifacts" not in args:
         args = [*args, "--publishArtifacts", "__.publishArtifacts"]
-    cmd = mill_command(cache / current["launcher"], jvm, ["--no-daemon", *args])
+    cmd = mill_command(cache / launcher_cache_path(root), jvm, ["--no-daemon", *args])
     return subprocess.run(cmd, cwd=work, env=env).returncode
 
 
@@ -758,20 +845,32 @@ def main(argv):
         return 0 if argv else 2
     verb, rest = argv[0], argv[1:]
     root = Path.cwd()
+    lock_file = root / LOCK_FILE
+    # Every verb takes --lockfile <path>, for a lockfile kept outside the
+    # build, before its own arguments.
+    if rest[:1] == ["--lockfile"]:
+        if len(rest) < 2:
+            print(__doc__.strip(), file=sys.stderr)
+            return 2
+        lock_file = Path(rest[1]).resolve()
+        rest = rest[2:]
     try:
         build_file(root)
-        if verb in ("lock", "relock"):
+        if verb == "lock":
             tests = None
             if rest[:1] == ["--tests"] and len(rest) == 2:
                 tests = rest[1]
             elif rest:
                 print(__doc__.strip(), file=sys.stderr)
                 return 2
-            lock(root, force=verb == "relock", tests=tests)
+            lock(root, lock_file, tests=tests)
+        elif verb == "prefetch" and not rest:
+            prefetch(root, lock_file)
+            caches(root, lock_file, read_lock(root, lock_file))
         elif verb == "mill":
-            interactive(root, rest)
+            return interactive(root, lock_file, rest)
         elif verb == "publish":
-            return publish(root, rest)
+            return publish(root, lock_file, rest)
         else:
             print(__doc__.strip(), file=sys.stderr)
             return 2

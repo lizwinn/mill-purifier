@@ -10,8 +10,9 @@ permissions:
   contents: read
 
 jobs:
-  # The flake checks: the fixtures and the real-world builds from their
-  # committed lockfiles, the unit tests, and the negative checks.
+  # The flake checks, on x86_64-linux and aarch64-linux: the fixture builds
+  # from their committed lockfiles, the unit tests, and the conformance
+  # checks that run in the sandbox.
   check:
     strategy:
       fail-fast: false
@@ -25,25 +26,39 @@ jobs:
       - name: Run the flake checks
         run: nix flake check -L
 
-  # A relock of every fixture reproduces its committed lockfile byte for
-  # byte.
-  relock:
-    runs-on: ubuntu-latest
+  # A lock of every fixture reproduces its committed lockfile byte for
+  # byte. It needs the network, which the sandbox does not have.
+  conformance-relock:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v5
       - uses: cachix/install-nix-action@v31
-      - name: Relock the fixtures
+      - name: Lock the fixtures
         run: tests/relock-fixtures.sh
       - name: Compare the lockfiles
         run: git diff --exit-code -- 'tests/fixtures/*/mill-purifier.lock.json'
 
-  # Negative tests outside the sandbox.
-  negative:
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
+  # A second build of each fixture package gives the same output.
+  conformance-rebuild:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v5
       - uses: cachix/install-nix-action@v31
-      - name: Run the negative tests
-        run: nix shell 'nixpkgs#python3' -c tests/negative.sh
+      - name: Build the fixture packages
+        run: |
+          system=$(nix eval --raw --impure --expr builtins.currentSystem)
+          echo "attrs=$(nix eval --json ".#checks.$system" --apply 'cs: builtins.filter (n: builtins.match "(simple-core|polyglot-.*-package)" n != null) (builtins.attrNames cs)' | jq -r --arg s "$system" 'map(".#checks.\($s).\(.)") | join(" ")')" >> "$GITHUB_ENV"
+      - name: Build them again and compare
+        run: |
+          nix build --no-link $attrs
+          nix build --no-link --rebuild $attrs

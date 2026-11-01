@@ -1,0 +1,192 @@
+[
+  {
+    "path": "https/cdn.azul.com/zulu/bin/zulu17.66.19-ca-jdk17.0.19-linux_aarch64.tar.gz",
+    "url": "https://cdn.azul.com/zulu/bin/zulu17.66.19-ca-jdk17.0.19-linux_aarch64.tar.gz",
+    "mirrors": []
+  },
+  {
+    "path": "https/cdn.azul.com/zulu/bin/zulu17.66.19-ca-jdk17.0.19-linux_x64.tar.gz",
+    "url": "https://cdn.azul.com/zulu/bin/zulu17.66.19-ca-jdk17.0.19-linux_x64.tar.gz",
+    "mirrors": []
+  },
+  {
+    "path": "https/cdn.azul.com/zulu/bin/zulu25.34.17-ca-jdk25.0.3-linux_aarch64.tar.gz",
+    "url": "https://cdn.azul.com/zulu/bin/zulu25.34.17-ca-jdk25.0.3-linux_aarch64.tar.gz",
+    "mirrors": []
+  },
+  {
+    "path": "https/cdn.azul.com/zulu/bin/zulu25.34.17-ca-jdk25.0.3-linux_x64.tar.gz",
+    "url": "https://cdn.azul.com/zulu/bin/zulu25.34.17-ca-jdk25.0.3-linux_x64.tar.gz",
+    "mirrors": []
+  },
+  {
+    "path": "https/maven.google.com/androidx/annotation/annotation-jvm/1.9.1/annotation-jvm-1.9.1.jar",
+    "url": "https://maven.google.com/androidx/annotation/annotation-jvm/1.9.1/annotation-jvm-1.9.1.jar",
+    "mirrors": []
+  },
+  {
+    "path": "https/maven.google.com/androidx/annotation/annotation-jvm/1.9.1/annotation-jvm-1.9.1.jar.sha1",
+    "url": "https://maven.google.com/androidx/annotation/annotation-jvm/1.9.1/annotation-jvm-1.9.1.jar.sha1",
+    "mirrors": []
+  },
+  {
+    "path": "https/maven.google.com/androidx/annotation/annotation-jvm/1.9.1/annotation-jvm-1.9.1.module",
+    "url": "https://maven.google.com/androidx/annotation/annotation-jvm/1.9.1/annotation-jvm-1.9.1.module",
+    "mirrors": []
+  },
+  {
+    "path": "https/maven.google.com/androidx/annotation/annotation-jvm/1.9.1/annotation-jvm-1.9.1.module.sha1",
+    "url": "https://maven.google.com/androidx/annotation/annotation-jvm/1.9.1/annotation-jvm-1.9.1.module.sha1",
+    "mirrors": []
+  },
+  {
+    "path": "https/maven.google.com/androidx/annotation/annotation-jvm/1.9.1/annotation-jvm-1.9.1.pom",
+    "url": "https://maven.google.com/androidx/annotation/annotation-jvm/1.9.1/annotation-jvm-1.9.1.pom",
+    "mirrors": []
+  },
+  {
+    "path": "https/maven.google.com/androidx/annotation/annotation-jvm/1.9.1/annotation-jvm-1.9.1.pom.sha1",
+    "url": "https://maven.google.com/androidx/annotation/annotation-jvm/1.9.1/annotation-jvm-1.9.1.pom.sha1",
+    "mirrors": []
+  },
+  {
+    "path": "https/repo1.maven.org/maven2/ch/qos/logback/logback-classic/1.6.5/logback-classic-1.6.5.jar",
+    "url": "https://repo1.maven.org/maven2/ch/qos/logback/logback-classic/1.6.5/logback-classic-1.6.5.jar",
+    "mirrors": [
+      "https://maven-central.storage-download.googleapis.com/maven2/ch/qos/logback/logback-classic/1.6.5/logback-classic-1.6.5.jar"
+    ]
+  },
+  {
+    "path": "https/repo1.maven.org/maven2/ch/qos/logback/logback-classic/1.6.5/logback-classic-1.6.5.jar.sha1",
+    "url": "https://repo1.maven.org/maven2/ch/qos/logback/logback-classic/1.6.5/logback-classic-1.6.5.jar.sha1",
+    "mirrors": [
+      "https://maven-central.storage-download.googleapis.com/maven2/ch/qos/logback/logback-classic/1.6.5/logback-classic-1.6.5.jar.sha1"
+    ]
+  },
+  {
+    "path": "https/repo1.maven.org/maven2/ch/qos/logback/logback-classic/1.6.5/logback-classic-1.6.5.pom",
+    "url": "https://repo1.maven.org/maven2/ch/qos/logback/logback-classic/1.6.5/logback-classic-1.6.5.pom",
+    "mirrors": [
+      "https://maven-central.storage-download.googleapis.com/maven2/ch/qos/logback/logback-classic/1.6.5/logback-classic-1.6.5.pom"
+    ]
+  },
+  {
+    "path": "https/repo1.maven.org/maven2/ch/qos/logback/logback-classic/1.6.5/logback-classic-1.6.5.pom.sha1",
+    "url": "https://repo1.maven.org/maven2/ch/qos/logback/logback-classic/1.6.5/logback-classic-1.6.5.pom.sha1",
+    "mirrors": [
+      "https://maven-central.storage-download.googleapis.com/maven2/ch/qos/logback/logback-classic/1.6.5/logback-classic-1.6.5.pom.sha1"
+    ]
+  },
+  {
+    "path": "https/repo1.maven.org/maven2/ch/qos/logback/logback-core/1.6.5/logback-core-1.6.5.jar",
+    "url": "https://repo1.maven.org/maven2/ch/qos/logback/logback-core/1.6.5/logback-core-1.6.5.jar",
+    "mirrors": [
+      "https://maven-central.storage-download.googleapis.com/maven2/ch/qos/logback/logback-core/1.6.5/logback-core-1.6.5.jar"
+    ]
+  },
+  {
+    "path": "https/repo1.maven.org/maven2/ch/qos/logback/logback-core/1.6.5/logback-core-1.6.5.jar.sha1",
+    "url": "https://repo1.maven.org/maven2/ch/qos/logback/logback-core/1.6.5/logback-core-1.6.5.jar.sha1",
+    "mirrors": [
+      "https://maven-central.storage-download.googleapis.com/maven2/ch/qos/logback/logback-core/1.6.5/logback-core-1.6.5.jar.sha1"
+    ]
+  },
+  {
+    "path": "https/repo1.maven.org/maven2/ch/qos/logback/logback-core/1.6.5/logback-core-1.6.5.pom",
+    "url": "https://repo1.maven.org/maven2/ch/qos/logback/logback-core/1.6.5/logback-core-1.6.5.pom",
+    "mirrors": [
+      "https://maven-central.storage-download.googleapis.com/maven2/ch/qos/logback/logback-core/1.6.5/logback-core-1.6.5.pom"
+    ]
+  },
+  {
+    "path": "https/repo1.maven.org/maven2/ch/qos/logback/logback-core/1.6.5/logback-core-1.6.5.pom.sha1",
+    "url": "https://repo1.maven.org/maven2/ch/qos/logback/logback-core/1.6.5/logback-core-1.6.5.pom.sha1",
+    "mirrors": [
+      "https://maven-central.storage-download.googleapis.com/maven2/ch/qos/logback/logback-core/1.6.5/logback-core-1.6.5.pom.sha1"
+    ]
+  },
+  {
+    "path": "https/repo1.maven.org/maven2/ch/qos/logback/logback-parent/1.6.5/logback-parent-1.6.5.pom",
+    "url": "https://repo1.maven.org/maven2/ch/qos/logback/logback-parent/1.6.5/logback-parent-1.6.5.pom",
+    "mirrors": [
+      "https://maven-central.storage-download.googleapis.com/maven2/ch/qos/logback/logback-parent/1.6.5/logback-parent-1.6.5.pom"
+    ]
+  },
+  {
+    "path": "https/repo1.maven.org/maven2/ch/qos/logback/logback-parent/1.6.5/logback-parent-1.6.5.pom.sha1",
+    "url": "https://repo1.maven.org/maven2/ch/qos/logback/logback-parent/1.6.5/logback-parent-1.6.5.pom.sha1",
+    "mirrors": [
+      "https://maven-central.storage-download.googleapis.com/maven2/ch/qos/logback/logback-parent/1.6.5/logback-parent-1.6.5.pom.sha1"
+    ]
+  },
+  {
+    "path": "https/repo1.maven.org/maven2/com/eed3si9n/shaded-jawn-parser_3/1.3.2/shaded-jawn-parser_3-1.3.2.jar",
+    "url": "https://repo1.maven.org/maven2/com/eed3si9n/shaded-jawn-parser_3/1.3.2/shaded-jawn-parser_3-1.3.2.jar",
+    "mirrors": [
+      "https://maven-central.storage-download.googleapis.com/maven2/com/eed3si9n/shaded-jawn-parser_3/1.3.2/shaded-jawn-parser_3-1.3.2.jar"
+    ]
+  },
+  {
+    "path": "https/repo1.maven.org/maven2/com/eed3si9n/shaded-jawn-parser_3/1.3.2/shaded-jawn-parser_3-1.3.2.jar.sha1",
+    "url": "https://repo1.maven.org/maven2/com/eed3si9n/shaded-jawn-parser_3/1.3.2/shaded-jawn-parser_3-1.3.2.jar.sha1",
+    "mirrors": [
+      "https://maven-central.storage-download.googleapis.com/maven2/com/eed3si9n/shaded-jawn-parser_3/1.3.2/shaded-jawn-parser_3-1.3.2.jar.sha1"
+    ]
+  },
+  {
+    "path": "https/repo1.maven.org/maven2/com/eed3si9n/shaded-jawn-parser_3/1.3.2/shaded-jawn-parser_3-1.3.2.pom",
+    "url": "https://repo1.maven.org/maven2/com/eed3si9n/shaded-jawn-parser_3/1.3.2/shaded-jawn-parser_3-1.3.2.pom",
+    "mirrors": [
+      "https://maven-central.storage-download.googleapis.com/maven2/com/eed3si9n/shaded-jawn-parser_3/1.3.2/shaded-jawn-parser_3-1.3.2.pom"
+    ]
+  },
+  {
+    "path": "https/repo1.maven.org/maven2/com/eed3si9n/shaded-jawn-parser_3/1.3.2/shaded-jawn-parser_3-1.3.2.pom.sha1",
+    "url": "https://repo1.maven.org/maven2/com/eed3si9n/shaded-jawn-parser_3/1.3.2/shaded-jawn-parser_3-1.3.2.pom.sha1",
+    "mirrors": [
+      "https://maven-central.storage-download.googleapis.com/maven2/com/eed3si9n/shaded-jawn-parser_3/1.3.2/shaded-jawn-parser_3-1.3.2.pom.sha1"
+    ]
+  },
+  {
+    "path": "https/repo1.maven.org/maven2/com/eed3si9n/shaded-scalajson_3/1.0.0-M4/shaded-scalajson_3-1.0.0-M4.jar",
+    "url": "https://repo1.maven.org/maven2/com/eed3si9n/shaded-scalajson_3/1.0.0-M4/shaded-scalajson_3-1.0.0-M4.jar",
+    "mirrors": [
+      "https://maven-central.storage-download.googleapis.com/maven2/com/eed3si9n/shaded-scalajson_3/1.0.0-M4/shaded-scalajson_3-1.0.0-M4.jar"
+    ]
+  },
+  {
+    "path": "https/repo1.maven.org/maven2/com/eed3si9n/shaded-scalajson_3/1.0.0-M4/shaded-scalajson_3-1.0.0-M4.jar.sha1",
+    "url": "https://repo1.maven.org/maven2/com/eed3si9n/shaded-scalajson_3/1.0.0-M4/shaded-scalajson_3-1.0.0-M4.jar.sha1",
+    "mirrors": [
+      "https://maven-central.storage-download.googleapis.com/maven2/com/eed3si9n/shaded-scalajson_3/1.0.0-M4/shaded-scalajson_3-1.0.0-M4.jar.sha1"
+    ]
+  },
+  {
+    "path": "https/repo1.maven.org/maven2/com/eed3si9n/shaded-scalajson_3/1.0.0-M4/shaded-scalajson_3-1.0.0-M4.pom",
+    "url": "https://repo1.maven.org/maven2/com/eed3si9n/shaded-scalajson_3/1.0.0-M4/shaded-scalajson_3-1.0.0-M4.pom",
+    "mirrors": [
+      "https://maven-central.storage-download.googleapis.com/maven2/com/eed3si9n/shaded-scalajson_3/1.0.0-M4/shaded-scalajson_3-1.0.0-M4.pom"
+    ]
+  },
+  {
+    "path": "https/repo1.maven.org/maven2/com/eed3si9n/shaded-scalajson_3/1.0.0-M4/shaded-scalajson_3-1.0.0-M4.pom.sha1",
+    "url": "https://repo1.maven.org/maven2/com/eed3si9n/shaded-scalajson_3/1.0.0-M4/shaded-scalajson_3-1.0.0-M4.pom.sha1",
+    "mirrors": [
+      "https://maven-central.storage-download.googleapis.com/maven2/com/eed3si9n/shaded-scalajson_3/1.0.0-M4/shaded-scalajson_3-1.0.0-M4.pom.sha1"
+    ]
+  },
+  {
+    "path": "https/repo1.maven.org/maven2/com/eed3si9n/sjson-new-core_3/0.10.1/sjson-new-core_3-0.10.1.pom",
+    "url": "https://repo1.maven.org/maven2/com/eed3si9n/sjson-new-core_3/0.10.1/sjson-new-core_3-0.10.1.pom",
+    "mirrors": [
+      "https://maven-central.storage-download.googleapis.com/maven2/com/eed3si9n/sjson-new-core_3/0.10.1/sjson-new-core_3-0.10.1.pom"
+    ]
+  },
+  {
+    "path": "https/repo1.maven.org/maven2/com/eed3si9n/sjson-new-core_3/0.10.1/sjson-new-core_3-0.10.1.pom.sha1",
+    "url": "https://repo1.maven.org/maven2/com/eed3si9n/sjson-new-core_3/0.10.1/sjson-new-core_3-0.10.1.pom.sha1",
+    "mirrors": [
+      "https://maven-central.storage-download.googleapis.com/maven2/com/eed3si9n/sjson-new-core_3/0.10.1/sjson-new-core_3-0.10.1.pom.sha1"
+    ]
+  }
+]

@@ -1,23 +1,24 @@
 # SPDX-License-Identifier: MIT
 #
 # The checks of the flake: the fixture builds of tests/fixtures, made from
-# their committed lockfiles in the Nix sandbox, and the mill-purifier
-# command (whose install check runs the unit tests of coursier_cache.py).
+# their committed lockfiles in the Nix sandbox, the conformance checks of
+# the purifier contract, and the mill-purifier command (whose install check
+# runs the unit tests). conformance-relock and conformance-rebuild need the
+# network or a second build, so they are CI jobs (.github/workflows).
 # `tests/relock-fixtures.sh` writes the lockfiles again.
 {
   pkgs,
-  overlay,
+  millPurifier,
   cli,
 }:
 let
-  purified = pkgs.extend overlay;
-  inherit (purified) lib;
-  system = purified.stdenv.hostPlatform.system;
+  inherit (pkgs) lib;
+  build = args: millPurifier.buildMillProject ({ inherit pkgs; } // args);
 
   # The output of a Mill run must equal `expected`.
   prints =
     name: run: expected:
-    purified.runCommand name { } ''
+    pkgs.runCommand name { } ''
       if [ "$(cat ${run})" != ${lib.escapeShellArg expected} ]; then
         echo "${name}: expected ${lib.escapeShellArg expected}, Mill printed:" >&2
         cat ${run} >&2
@@ -30,7 +31,7 @@ let
   # at its coordinates in Maven layout.
   hasArtifacts =
     name: package: mavenPath:
-    purified.runCommand name { } ''
+    pkgs.runCommand name { } ''
       test -d ${package}/${mavenPath}
       ${lib.concatMapStrings (file: ''
         test -e ${lib.escapeShellArg file}
@@ -40,33 +41,26 @@ let
 
   # tests/fixtures/simple: a Scala module with a test suite, on the system
   # JDK.
-  simple = purified.buildMillProject {
-    src = ./fixtures/simple;
-    # Runs the munit suite of core.test in the sandbox.
-    doCheck = true;
-  };
+  simple = build { src = ./fixtures/simple; };
   core = simple.packages.core;
 
-  # tests/fixtures/polyglot: Java, Kotlin and Scala modules, a custom
-  # repository, a meta-build plugin, a version from git, and JVMs Mill
-  # downloads. Its lock holds JDK archives for x86_64-linux.
-  polyglot = purified.buildMillProject {
-    src = ./fixtures/polyglot;
-    git = {
-      rev = "0123456789abcdef0123456789abcdef01234567";
-      revCount = 42;
-      tag = "v1.2.3";
-      commitsSinceTag = 0;
-    };
-  };
-  # Lockfiles made from the simple fixture with one thing wrong.
+  # Lockfiles made from the simple fixture with one thing changed, sealed
+  # with their content hash as `mill-purifier lock` would write them, or not
+  # (`tampered`).
   simpleLock = builtins.fromJSON (builtins.readFile ./fixtures/simple/mill-purifier.lock.json);
-  lockWith = name: changes: builtins.toFile "${name}.json" (builtins.toJSON (simpleLock // changes));
+  seal =
+    lock:
+    lock
+    // {
+      contentHash =
+        "sha256:" + builtins.hashString "sha256" (builtins.toJSON (removeAttrs lock [ "contentHash" ]));
+    };
+  lockFileOf = name: lock: builtins.toFile "${name}.json" (builtins.toJSON lock);
   simpleWith =
-    name: changes:
-    purified.buildMillProject {
+    name: lock:
+    build {
       src = ./fixtures/simple;
-      lockFile = lockWith name changes;
+      lockFile = lockFileOf name lock;
     };
   # A check that evaluating `value` fails, as a lockfile error must.
   failsToEvaluate =
@@ -74,85 +68,165 @@ let
     assert
       !(builtins.tryEval (builtins.seq value true)).success
       || throw "${name}: the evaluation was expected to fail";
-    purified.runCommand name { } "touch $out";
+    pkgs.runCommand name { } "touch $out";
   upickleJar = "https/repo1.maven.org/maven2/com/lihaoyi/upickle_3/4.1.0/upickle_3-4.1.0.jar";
 
-  polyglotUntagged = purified.buildMillProject {
+  # The simple fixture without its lockfile, as a packaging flake sees a
+  # project whose author keeps no lockfile.
+  simpleWithoutLock = builtins.path {
+    path = ./fixtures/simple;
+    name = "simple-without-lock";
+    filter = path: _: baseNameOf path != "mill-purifier.lock.json";
+  };
+  external = build {
+    src = simpleWithoutLock;
+    lockFile = ./fixtures/simple/mill-purifier.lock.json;
+  };
+
+  # tests/fixtures/polyglot: Java, Kotlin and Scala modules, a custom
+  # repository, a meta-build plugin, a version from git, and JVMs Mill
+  # downloads, for x86_64-linux and aarch64-linux.
+  polyglotGit = commitsSinceTag: {
+    rev = "0123456789abcdef0123456789abcdef01234567";
+    revCount = 42;
+    tag = "v1.2.3";
+    inherit commitsSinceTag;
+  };
+  polyglot = build {
     src = ./fixtures/polyglot;
-    git = {
-      rev = "0123456789abcdef0123456789abcdef01234567";
-      revCount = 42;
-      tag = "v1.2.3";
-      commitsSinceTag = 5;
-    };
+    git = polyglotGit 0;
+  };
+  polyglotUntagged = build {
+    src = ./fixtures/polyglot;
+    git = polyglotGit 5;
   };
 in
 {
   inherit cli;
 
   simple-core = core;
+  simple-tests = simple.tests;
   simple-core-artifacts = hasArtifacts "simple-core-artifacts" core "example/core_3/0.1.0";
-  simple-core-jar =
-    purified.runCommand "simple-core-jar" { nativeBuildInputs = [ purified.unzip ]; }
-      ''
-        unzip -l ${core.artifacts."core_3.jar"} | grep -q 'example/Encode.class'
-        grep -q '<artifactId>core_3</artifactId>' ${core.artifacts."core_3.pom"}
-        touch $out
-      '';
+  simple-core-jar = pkgs.runCommand "simple-core-jar" { nativeBuildInputs = [ pkgs.unzip ]; } ''
+    unzip -l ${core.artifacts."core_3.jar"} | grep -q 'example/Encode.class'
+    grep -q '<artifactId>core_3</artifactId>' ${core.artifacts."core_3.pom"}
+    touch $out
+  '';
   simple-run = prints "simple-run" (simple.runTask "simple-run-output" [ "core.run" ]) "[1,2]";
+
+  # Mill's Maven publisher, offline, publishes the files Nix built.
+  simple-release = pkgs.runCommand "simple-release" { } ''
+    cmp ${simple.release}/example/core_3/0.1.0/core_3-0.1.0.jar ${core.artifacts."core_3.jar"}
+    cmp ${simple.release}/example/core_3/0.1.0/core_3-0.1.0.pom ${core.artifacts."core_3.pom"}
+    test -f ${simple.release}/example/core_3/0.1.0/core_3-0.1.0-sources.jar.sha1
+    touch $out
+  '';
+
+  # nix/lib/lock.nix derives from each path the URL and the mirrors that the
+  # lock run recorded for it (tests/url-vectors.json, taken from lock runs).
+  derived-urls =
+    let
+      vectors = builtins.fromJSON (builtins.readFile ./url-vectors.json);
+      lockFile = lockFileOf "url-vectors" (seal {
+        version = 2;
+        definitionHash = "sha256:0";
+        projects = [ ];
+        artifacts = map (v: {
+          inherit (v) path;
+          hash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+        }) vectors;
+      });
+      derived = (import ../nix/lib/lock.nix { inherit lockFile; }).artifacts;
+      wrong = lib.filter (p: p.d.url != p.v.url || p.d.mirrors != p.v.mirrors) (
+        lib.zipListsWith (v: d: { inherit v d; }) vectors derived
+      );
+    in
+    assert
+      wrong == [ ] || throw "derived-urls: lock.nix derives ${builtins.toJSON (map (p: p.d) wrong)}";
+    pkgs.runCommand "derived-urls" { } "touch $out";
 
   # The Nix side computes the definition hash the command wrote.
   definition-hash =
     assert
       (import ../nix/lib/definition-hash.nix ./fixtures/simple).hash == simpleLock.definitionHash
       || throw "definition-hash: nix/lib/definition-hash.nix disagrees with mill_purifier.definition_hash";
-    purified.runCommand "definition-hash" { } "touch $out";
+    pkgs.runCommand "definition-hash" { } "touch $out";
 
-  # A stale lock, a lockfile without the fields of a lock, and a lockfile
-  # of another format version stop the build at evaluation.
-  stale-lock =
-    failsToEvaluate "stale-lock"
-      (simpleWith "stale" {
-        definitionHash = "sha256:0";
-      }).packages.core.drvPath;
-  malformed-lock =
-    failsToEvaluate "malformed-lock"
-      (purified.buildMillProject {
+  # The conformance checks of the purifier contract.
+  conformance-stale =
+    failsToEvaluate "conformance-stale"
+      (simpleWith "stale" (seal (simpleLock // { definitionHash = "sha256:0"; }))).packages.core.drvPath;
+  conformance-tampered =
+    failsToEvaluate "conformance-tampered"
+      (simpleWith "tampered" (
+        simpleLock
+        // {
+          artifacts = map (
+            a:
+            if a.path or "" == upickleJar then
+              a // { hash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="; }
+            else
+              a
+          ) simpleLock.artifacts;
+        }
+      )).packages.core.drvPath;
+  conformance-malformed =
+    failsToEvaluate "conformance-malformed"
+      (build {
         src = ./fixtures/simple;
-        lockFile = builtins.toFile "malformed.json" ''{"version": 1}'';
+        lockFile = builtins.toFile "malformed.json" ''{"version": 2}'';
         checkLock = false;
       }).packages;
-  other-format-version =
-    failsToEvaluate "other-format-version"
-      (simpleWith "version" {
-        version = 99;
-      }).packages;
-
+  conformance-other-version =
+    failsToEvaluate "conformance-other-version"
+      (simpleWith "version" (seal (simpleLock // { version = 99; }))).packages;
   # A lock that lacks a download fails in the sandbox, offline, and the
-  # build says which command fixes it.
-  missing-download =
-    purified.runCommand "missing-download"
+  # build names the command that fixes it.
+  conformance-missing =
+    pkgs.runCommand "conformance-missing"
       {
         failed =
-          purified.testers.testBuildFailure
-            (simpleWith "missing" {
-              artifacts = builtins.filter (a: a.path != upickleJar) simpleLock.artifacts;
-            }).packages.core;
+          pkgs.testers.testBuildFailure
+            (simpleWith "missing" (
+              seal (simpleLock // { artifacts = builtins.filter (a: a.path != upickleJar) simpleLock.artifacts; })
+            )).packages.core;
       }
       ''
         grep -F 'run `mill-purifier lock`' $failed/testBuildFailure.log
         touch $out
       '';
-
-  # Mill's Maven publisher, offline, publishes the files Nix built.
-  simple-repository = purified.runCommand "simple-repository" { } ''
-    cmp ${simple.repository}/example/core_3/0.1.0/core_3-0.1.0.jar ${core.artifacts."core_3.jar"}
-    cmp ${simple.repository}/example/core_3/0.1.0/core_3-0.1.0.pom ${core.artifacts."core_3.pom"}
-    test -f ${simple.repository}/example/core_3/0.1.0/core_3-0.1.0-sources.jar.sha1
-    touch $out
-  '';
+  # A source tree with no lockfile builds from one kept outside it.
+  conformance-external = prints "conformance-external" (external.runTask "external-run" [
+    "core.run"
+  ]) "[1,2]";
+  # After a prefetch, the everyday loop works with no network: the sandbox
+  # has none. The prefetch record points at the caches Nix built, as
+  # `mill-purifier prefetch` writes it, and the command compiles and tests
+  # the fixture through `mill-purifier mill`.
+  conformance-offline =
+    pkgs.runCommand "conformance-offline"
+      {
+        nativeBuildInputs = [ cli ];
+        prefetchState = builtins.toJSON {
+          inherit (simpleLock) contentHash;
+          dependencies = "${simple.dependencies}";
+          archiveCache = "${simple.archiveCache}";
+        };
+        passAsFile = [ "prefetchState" ];
+      }
+      ''
+        export HOME="$TMPDIR/home" XDG_CACHE_HOME="$TMPDIR/cache"
+        mkdir -p "$HOME"
+        cp -r ${./fixtures/simple} project
+        chmod -R u+w project
+        cd project
+        mkdir -p out/mill-purifier
+        cp "$prefetchStatePath" out/mill-purifier/prefetch.json
+        mill-purifier mill --no-daemon --ticker false core.compile + core.test
+        touch $out
+      '';
 }
-// lib.optionalAttrs (polyglot.lock.platforms ? ${system}) {
+// lib.optionalAttrs (polyglot.lock.platforms ? ${pkgs.stdenv.hostPlatform.system}) {
   polyglot-greeter-package = polyglot.packages.greeter;
   polyglot-hello-package = polyglot.packages.hello;
   polyglot-versioned-package = polyglot.packages.versioned;
@@ -175,9 +249,9 @@ in
     "polyglot-versioned-output"
     [ "versioned.run" ]
   ) "built with Scala 3.7.3";
-  polyglot-repository = purified.runCommand "polyglot-repository" { } ''
+  polyglot-release = pkgs.runCommand "polyglot-release" { } ''
     for path in example/greeter/0.1.0/greeter-0.1.0.jar example/hello/0.1.0/hello-0.1.0.jar example/versioned_3/1.2.3/versioned_3-1.2.3.jar; do
-      test -f ${polyglot.repository}/$path
+      test -f ${polyglot.release}/$path
     done
     touch $out
   '';
