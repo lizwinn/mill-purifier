@@ -11,7 +11,8 @@ It supports Mill 1.x, and Java, Kotlin and Scala modules.
 
 ## Quickstart
 
-Lock the build from its root and commit `mill-purifier.lock.json`:
+Lock the build from its root and commit `mill-purifier.lock.json` to the
+repository of the project:
 
 ```zsh
 nix run github:nix-purifiers/mill-purifier -- lock
@@ -20,16 +21,36 @@ nix run github:nix-purifiers/mill-purifier -- lock
 The build must pin its Mill version, in the `//| mill-version:` header of
 `build.mill` or in `.mill-version`.
 
-Build it with Nix. The overlay of the flake, `overlays.default`, adds one
-attribute to the package set: the scope `mill-purifier`, which holds the
-builder `buildMillProject` beside the `mill-purifier` command. A package
-takes the scope by name:
+Build the project with Nix from the same directory. This adds no Nix file to
+the project:
 
-```nix
-# package.nix
-{ mill-purifier }:
-(mill-purifier.buildMillProject { src = ./.; }).packages.core
+```zsh
+nix build --impure --expr '
+  let
+    purifier = builtins.getFlake "github:nix-purifiers/mill-purifier";
+    pkgs = import purifier.inputs.nixpkgs {
+      system = builtins.currentSystem;
+      overlays = [ purifier.overlays.default ];
+    };
+  in
+  (pkgs.mill-purifier.buildMillProject { src = ./.; }).packages.core'
 ```
+
+This uses the purifier's pinned nixpkgs, matching the lock command above.
+To build with ambient `<nixpkgs>` from your Nix search path instead,
+replace `import purifier.inputs.nixpkgs` with `import <nixpkgs>`.
+Both forms need no Nix files in your project. The build tool and language
+versions must match the lockfile; with ambient nixpkgs, lock with the
+purifier from that package set or pass a compatible toolchain to the builder.
+
+The command builds the module `core`. The overlay of the flake,
+`overlays.default`, adds one attribute to the package set: the scope
+`mill-purifier`, which holds the builder `buildMillProject` beside the
+`mill-purifier` command.
+
+A project whose authors want a flake that packages it can have one, in the
+repository of the project or in another repository. The flake calls the
+builder directly:
 
 ```nix
 {
@@ -40,18 +61,20 @@ takes the scope by name:
     let
       system = "x86_64-linux";
       pkgs = nixpkgs.legacyPackages.${system}.extend mill-purifier.overlays.default;
+      build = pkgs.mill-purifier.buildMillProject { src = ./.; };
     in
     {
-      packages.${system}.core = pkgs.callPackage ./package.nix { };
-      checks.${system}.tests = (pkgs.mill-purifier.buildMillProject { src = ./.; }).tests;
+      packages.${system}.core = build.packages.core;
+      checks.${system}.tests = build.tests;
     };
 }
 ```
 
-`nix build '.#core'` builds the module `core`. The builder takes the
-packages it needs by name, such as `stdenvNoCC` and `jq`.
-`mill-purifier.buildMillProject.override` replaces any of them, and
-`mill-purifier.overrideScope` replaces what everything in the scope shares.
+`nix build '.#core'` builds the module `core`, and `nix flake check` runs
+the tests. The builder takes the packages it needs by name, such as
+`stdenvNoCC` and `jq`. `mill-purifier.buildMillProject.override` replaces any
+of them, and `mill-purifier.overrideScope` replaces what everything in the
+scope shares.
 
 ### What the builder takes and returns
 
@@ -394,60 +417,41 @@ and reports `no-vcs`, as it does for a source tree without git.
 
 [fansi](https://github.com/com-lihaoyi/fansi) is a Scala library for
 strings with ANSI colors. Its build is a Mill build for the JVM, Scala.js
-and Scala Native, cross-built for three Scala versions. The repository of
-fansi has no lockfile, so this example is a packaging flake: it locks a
-checkout of the tag 0.5.1, and keeps the lockfile in the repository of the
-flake. In your own project, you commit `mill-purifier.lock.json` to the
-repository and pass no `lockFile`.
+and Scala Native, cross-built for three Scala versions. To build version
+0.5.1, lock a checkout of the tag, and build the JVM package for Scala
+2.13.15 from the same directory:
 
 ```zsh
 git clone --branch 0.5.1 https://github.com/com-lihaoyi/fansi
 cd fansi
-mill-purifier lock --lockfile ../fansi.lock.json --tests 'fansi.jvm[2.13.15].test.testForked'
+nix run github:nix-purifiers/mill-purifier -- lock --tests 'fansi.jvm[2.13.15].test.testForked'
+nix build --impure --expr '
+  let
+    purifier = builtins.getFlake "github:nix-purifiers/mill-purifier";
+    pkgs = import purifier.inputs.nixpkgs {
+      system = builtins.currentSystem;
+      overlays = [ purifier.overlays.default ];
+    };
+    checkout = builtins.fetchGit ./.;
+  in
+  (pkgs.mill-purifier.buildMillProject {
+    src = ./.;
+    git = {
+      inherit (checkout) rev revCount;
+      tag = "0.5.1";
+      commitsSinceTag = 0;
+    };
+  }).packages."fansi.jvm[2.13.15]"'
 ```
 
 `--tests` names the tests that the lock run runs, so that their
 dependencies are in the lockfile: here, the JVM tests for Scala 2.13.15.
-The flake takes fansi as a source and builds the JVM package for that Scala
-version:
-
-```nix
-{
-  inputs.mill-purifier.url = "github:nix-purifiers/mill-purifier";
-  inputs.nixpkgs.follows = "mill-purifier/nixpkgs";
-  inputs.fansi = {
-    url = "github:com-lihaoyi/fansi/0.5.1";
-    flake = false;
-  };
-
-  outputs = { nixpkgs, mill-purifier, fansi, ... }:
-    let
-      system = "x86_64-linux";
-      pkgs = nixpkgs.legacyPackages.${system}.extend mill-purifier.overlays.default;
-      build = pkgs.mill-purifier.buildMillProject {
-        src = fansi.outPath;
-        lockFile = ./fansi.lock.json;
-        # fansi takes its version from git: this is the commit of the tag.
-        git = {
-          inherit (fansi) rev;
-          revCount = 147;
-          tag = "0.5.1";
-          commitsSinceTag = 0;
-        };
-      };
-    in
-    {
-      packages.${system}.default = build.packages."fansi.jvm[2.13.15]";
-      checks.${system}.tests = build.tests;
-    };
-}
-```
-
-`nix build` builds fansi 0.5.1 for Scala 2.13.15 in Maven layout, and
-`nix flake check` runs the tests. The other modules are
-`build.packages."fansi.js[3.3.6]"`, `build.packages."fansi.native[2.12.20]"`
-and so on. fansi builds with Mill 1.0.0, which has no Maven publisher, so
-`build.release` needs a project on Mill 1.1.0 or later.
+fansi takes its version from git, and the `git` argument tells the build
+that the source is the commit of the tag, so the package is version 0.5.1.
+The result holds the jar and the POM in Maven layout. The other modules are
+`packages."fansi.js[3.3.6]"`, `packages."fansi.native[2.12.20]"` and so on.
+fansi builds with Mill 1.0.0, which has no Maven publisher, so `release`
+needs a project on Mill 1.1.0 or later.
 
 ## Credits
 
