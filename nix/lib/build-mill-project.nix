@@ -17,8 +17,8 @@
 #   release        every package published by Mill's own Maven publisher
 #                  (mill.javalib.MavenPublishModule) into a Maven
 #                  repository: what `mill-purifier publish` uploads
-#   fetches        the purifier library entries the build fetches, for this
-#                  system
+#   fetches        the entries of the lock: the purifier library entries the
+#                  build fetches, those of one system carrying `systems`
 #   runTask        runTask name [ args ]: a derivation that runs Mill with
 #                  `args` offline in the sandbox, such as [ "core.run" ],
 #                  with what Mill prints in `out`
@@ -27,7 +27,7 @@
 #   dependencies   the coursier download cache of the fetches
 #   archiveCache   the coursier archive cache: the locked archives (JDKs),
 #                  unpacked and patched for Nix
-#   lock           the lockfile, as lock.nix reads it
+#   lock           the lock in memory, as readLock (read-lock.nix) gives it
 #   jdk            the JDK that runs Mill
 { purifier }:
 {
@@ -56,9 +56,9 @@
   # `filter` of builtins.path. The default leaves out build outputs and
   # editor state.
   srcFilter ? null,
-  # Stops the build when the build definition differs from the one the lock
-  # was made from (a stale lock).
-  checkLock ? true,
+  # Builds from a lock whose build definition differs from the one the lock
+  # was made from (a stale lock), which otherwise stops the build.
+  allowStaleLock ? false,
 }:
 let
   inherit (pkgs)
@@ -69,14 +69,10 @@ let
     strip-nondeterminism
     ;
 
-  lock' = import ./lock.nix { inherit lockFile; };
-  definition = import ./definition-hash.nix src;
-  lock =
-    assert
-      !checkLock
-      || definition.hash == lock'.definitionHash
-      || throw "mill-purifier: the build definition (${lib.concatStringsSep ", " definition.files}) changed since ${toString lockFile} was written, so the lock may miss what the build now downloads. Run `mill-purifier lock` in the build root and commit the lockfile, or pass `checkLock = false` to build from it anyway.";
-    lock';
+  # The lock in memory (read-lock.nix), which checkLock of the purifier
+  # library stops at with its problems.
+  lock = purifier.checkLock (import ./read-lock.nix { inherit src lockFile allowStaleLock; });
+  system = pkgs.stdenv.hostPlatform.system;
 
   # Build outputs and editor state never take part in a build.
   defaultSrcFilter =
@@ -104,8 +100,16 @@ let
   millVersion = import ./mill-version.nix src;
   launcher = "https/repo1.maven.org/maven2/com/lihaoyi/mill-dist/${millVersion}/mill-dist-${millVersion}.exe";
 
-  platform = lock.platform pkgs.stdenv.hostPlatform.system;
-  fetches = lock.artifacts ++ platform.artifacts;
+  # The downloads of this system, and the JVM archives coursier unpacks on
+  # it. A lock whose build downloads a JVM holds the archives of each system
+  # it was made for.
+  systemEntries = purifier.entriesFor system lock;
+  archives =
+    if lock.mill.archives == { } then
+      [ ]
+    else
+      lock.mill.archives.${system}
+        or (throw "mill-purifier: ${toString lockFile} locks the JVMs of the build for ${lib.concatStringsSep " and " (builtins.attrNames lock.mill.archives)}, not for ${system}.");
   fetcherArgs = {
     inherit pkgs;
   }
@@ -115,11 +119,12 @@ let
     fetcherArgs
     // {
       name = "mill-coursier-cache";
-      entries = fetches;
+      entries = map (e: removeAttrs e [ "systems" ]) systemEntries;
     }
   );
   archiveCache = import ./archive-cache.nix {
-    inherit pkgs platform;
+    inherit pkgs archives;
+    entries = systemEntries;
     fetchEntry = purifier.fetchEntry fetcherArgs;
   };
   gitShim = if git == null then null else import ./git-shim.nix { inherit lib pkgs; } git;
@@ -239,7 +244,7 @@ let
       meta.description = "${project.name}, built by mill-purifier";
     });
 
-  packages = builtins.mapAttrs (_: mkPackage) lock.projectsById;
+  packages = builtins.mapAttrs (_: mkPackage) lock.mill.projectsById;
 
   runTask =
     name: args:
@@ -262,10 +267,10 @@ let
   # The test tasks the lock run ran (`testTasks`), in one Mill run. A build
   # whose lock ran no tests has an empty test run.
   tests =
-    if lock.testTasks == [ ] then
+    if lock.mill.testTasks == [ ] then
       runCommand "mill-tests" { } "echo 'the lock ran no test tasks' > $out"
     else
-      runTask "mill-tests" (lib.intersperse "+" lock.testTasks);
+      runTask "mill-tests" (lib.intersperse "+" lock.mill.testTasks);
 
   # A Mill build with one module per package, whose `publishArtifacts` task
   # returns the files of the package. Mill's publishers take the tasks to
@@ -296,7 +301,7 @@ let
               "      Seq(\n" +
               ([.files[] | "        PathRef(os.Path(\(.path | tojson))) -> \(.name | tojson)"] | join(",\n")) +
               "\n      )\n    )\n  }\n}"' ${packages.${p.id}}/nix-support/publish.json
-          '') lock.projects}
+          '') (builtins.attrValues lock.mill.projectsById)}
         } > $out/build.mill
       '';
 
@@ -330,11 +335,12 @@ in
     packages
     tests
     release
-    fetches
     runTask
     publishBuild
     dependencies
     archiveCache
     ;
+  # The downloads of the lock, for every system it was made for.
+  fetches = lock.entries;
   jdk = jdk';
 }

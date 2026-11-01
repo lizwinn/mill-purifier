@@ -58,10 +58,11 @@ Build it with Nix. The flake publishes the builder in its library as
   `src`, and a lockfile given here replaces any copy in `src`, so a
   packaging flake can build a project whose author keeps no lockfile.
 - `jdk`: the JDK that runs Mill's launcher. The default is the headless
-  OpenJDK of the major version the lock was made with.
+  OpenJDK 21 that `nix/lib/jdk.nix` names, which the `mill-purifier`
+  command also uses.
 - `git`: the commit the source is of, for a version from git (see
   [Versions from git](#versions-from-git)).
-- `srcFilter`, and `checkLock = false` to build from a stale lockfile.
+- `srcFilter`, and `allowStaleLock = true` to build from a stale lockfile.
 
 It returns:
 
@@ -75,10 +76,31 @@ It returns:
 - `release`: every package published by Mill's own Maven publisher
   (`mill.javalib.MavenPublishModule`) into a Maven repository, with its
   checksums and `maven-metadata.xml`. It is what `publish` uploads.
-- `fetches`: the purifier library entries the build fetches for this
-  system, for SBOM, license and vulnerability tools.
+- `fetches`: the entries of the lock, the downloads of the build as
+  purifier library entries. An entry needed on one system only, such as a
+  JVM archive, carries `systems`.
 - `runTask "name" [ "core.run" ]`: a derivation that runs Mill with those
   arguments offline in the sandbox, and holds what Mill printed.
+- `lock`: the lock in memory, as `readLock` gives it.
+
+### Reading the lock
+
+`lib.mill-purifier.readLock { src, lockFile ? src + "/mill-purifier.lock.json" }`
+reads the lockfile into the shape that the purifier contract gives every
+purifier: `{ purifier, entries, outputs, problems }`. A tool that reads
+the downloads of every purifier, such as a software bill of materials
+(SBOM) generator, calls it rather than parsing the lockfile.
+
+- `entries` are the downloads, with their URLs and mirrors derived.
+- `outputs.<module>` holds the `name` and the `artifacts` keys of each
+  package.
+- `problems` holds a message for a stale, tampered, malformed or
+  other-version lockfile, each naming `mill-purifier lock`. It is empty
+  for a usable lockfile. A lockfile that is not JSON fails evaluation.
+
+The builder passes the result to `checkLock` of the purifier library,
+which stops evaluation with the problems, and takes the entries of its
+system from `entriesFor`.
 
 The packages are deterministic. Mill writes the time of the build into its
 jars, and the package build normalizes them with `strip-nondeterminism`.

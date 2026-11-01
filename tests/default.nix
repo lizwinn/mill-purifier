@@ -69,6 +69,17 @@ let
       !(builtins.tryEval (builtins.seq value true)).success
       || throw "${name}: the evaluation was expected to fail";
     pkgs.runCommand name { } "touch $out";
+  # A check that readLock reports a problem with `lockFile` that names
+  # `mill-purifier lock`, and that the build stops at it.
+  rejects =
+    name: args:
+    let
+      problems = (millPurifier.readLock ({ src = ./fixtures/simple; } // args)).problems;
+    in
+    assert
+      problems != [ ] && lib.all (lib.hasInfix "`mill-purifier lock`") problems
+      || throw "${name}: readLock reports ${builtins.toJSON problems}";
+    failsToEvaluate name (build ({ src = ./fixtures/simple; } // args)).packages.core.drvPath;
   upickleJar = "https/repo1.maven.org/maven2/com/lihaoyi/upickle_3/4.1.0/upickle_3-4.1.0.jar";
 
   # The simple fixture without its lockfile, as a packaging flake sees a
@@ -122,8 +133,8 @@ in
     touch $out
   '';
 
-  # nix/lib/lock.nix derives from each path the URL and the mirrors that the
-  # lock run recorded for it (tests/url-vectors.json, taken from lock runs).
+  # readLock derives from each path the URL and the mirrors that the lock
+  # run recorded for it (tests/url-vectors.json, taken from lock runs).
   derived-urls =
     let
       vectors = builtins.fromJSON (builtins.readFile ./url-vectors.json);
@@ -136,14 +147,38 @@ in
           hash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
         }) vectors;
       });
-      derived = (import ../nix/lib/lock.nix { inherit lockFile; }).artifacts;
+      derived =
+        (millPurifier.readLock {
+          src = ./fixtures/simple;
+          inherit lockFile;
+          allowStaleLock = true;
+        }).entries;
       wrong = lib.filter (p: p.d.url != p.v.url || p.d.mirrors != p.v.mirrors) (
         lib.zipListsWith (v: d: { inherit v d; }) vectors derived
       );
     in
     assert
-      wrong == [ ] || throw "derived-urls: lock.nix derives ${builtins.toJSON (map (p: p.d) wrong)}";
+      wrong == [ ] || throw "derived-urls: readLock derives ${builtins.toJSON (map (p: p.d) wrong)}";
     pkgs.runCommand "derived-urls" { } "touch $out";
+
+  # readLock gives the lock in the shape of the contract, which checkLock of
+  # the purifier library accepts (the builder's `lock` has passed it), with
+  # the JVM index and archives of each platform marked with their system.
+  read-lock =
+    let
+      inherit (polyglot) lock;
+      systems = lib.unique (lib.concatMap (e: e.systems or [ ]) lock.entries);
+    in
+    assert
+      lock.purifier == "mill-purifier"
+      && lock.outputs ? greeter
+      &&
+        lib.sort lib.lessThan systems == [
+          "aarch64-linux"
+          "x86_64-linux"
+        ]
+      || throw "read-lock: readLock gives purifier ${lock.purifier}, outputs ${builtins.toJSON (builtins.attrNames lock.outputs)} and systems ${builtins.toJSON systems}";
+    pkgs.runCommand "read-lock" { } "touch $out";
 
   # The Nix side computes the definition hash the command wrote.
   definition-hash =
@@ -153,33 +188,30 @@ in
     pkgs.runCommand "definition-hash" { } "touch $out";
 
   # The conformance checks of the purifier contract.
-  conformance-stale =
-    failsToEvaluate "conformance-stale"
-      (simpleWith "stale" (seal (simpleLock // { definitionHash = "sha256:0"; }))).packages.core.drvPath;
-  conformance-tampered =
-    failsToEvaluate "conformance-tampered"
-      (simpleWith "tampered" (
-        simpleLock
-        // {
-          artifacts = map (
-            a:
-            if a.path or "" == upickleJar then
-              a // { hash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="; }
-            else
-              a
-          ) simpleLock.artifacts;
-        }
-      )).packages.core.drvPath;
-  conformance-malformed =
-    failsToEvaluate "conformance-malformed"
-      (build {
-        src = ./fixtures/simple;
-        lockFile = builtins.toFile "malformed.json" ''{"version": 2}'';
-        checkLock = false;
-      }).packages;
-  conformance-other-version =
-    failsToEvaluate "conformance-other-version"
-      (simpleWith "version" (seal (simpleLock // { version = 99; }))).packages;
+  conformance-stale = rejects "conformance-stale" {
+    lockFile = lockFileOf "stale" (seal (simpleLock // { definitionHash = "sha256:0"; }));
+  };
+  conformance-tampered = rejects "conformance-tampered" {
+    lockFile = lockFileOf "tampered" (
+      simpleLock
+      // {
+        artifacts = map (
+          a:
+          if a.path or "" == upickleJar then
+            a // { hash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="; }
+          else
+            a
+        ) simpleLock.artifacts;
+      }
+    );
+  };
+  conformance-malformed = rejects "conformance-malformed" {
+    lockFile = builtins.toFile "malformed.json" ''{"version": 2}'';
+    allowStaleLock = true;
+  };
+  conformance-other-version = rejects "conformance-other-version" {
+    lockFile = lockFileOf "version" (seal (simpleLock // { version = 99; }));
+  };
   # A lock that lacks a download fails in the sandbox, offline, and the
   # build names the command that fixes it.
   conformance-missing =
@@ -226,7 +258,7 @@ in
         touch $out
       '';
 }
-// lib.optionalAttrs (polyglot.lock.platforms ? ${pkgs.stdenv.hostPlatform.system}) {
+// lib.optionalAttrs (polyglot.lock.mill.archives ? ${pkgs.stdenv.hostPlatform.system}) {
   polyglot-greeter-package = polyglot.packages.greeter;
   polyglot-hello-package = polyglot.packages.hello;
   polyglot-versioned-package = polyglot.packages.versioned;

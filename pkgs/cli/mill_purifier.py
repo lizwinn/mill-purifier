@@ -263,7 +263,7 @@ MIRRORS = {MAVEN_CENTRAL: [MAVEN_CENTRAL_MIRROR]}
 def lock_entries(cache, paths):
     """The lock entries of `paths` in `cache`, as the lockfile records them:
     { path, hash }. A URL follows from its cache path, and the mirrors of
-    Maven Central from the URL, so nix/lib/lock.nix derives both, and the
+    Maven Central from the URL, so nix/lib/read-lock.nix derives both, and the
     lockfile holds only what the lock run observed."""
     return [{"path": e["path"], "hash": e["hash"]} for e in coursier_cache.entries(cache, paths, mirrors=MIRRORS)]
 
@@ -481,7 +481,7 @@ DEFAULT_TESTS = "__.testForked"
 def content_hash(lock_data):
     """The hash of a lockfile's content: the SHA-256 of the lockfile without
     `contentHash`, as compact JSON with sorted keys, which is what Nix's
-    builtins.toJSON writes, so nix/lib/lock.nix computes the same value."""
+    builtins.toJSON writes, so nix/lib/read-lock.nix computes the same value."""
     rest = {k: v for k, v in lock_data.items() if k != "contentHash"}
     text = json.dumps(rest, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return "sha256:" + hashlib.sha256(text.encode()).hexdigest()

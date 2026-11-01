@@ -1,18 +1,21 @@
 # The coursier archive cache of a lockfile. Coursier unpacks an archive it
 # downloaded, such as the JDK that Mill's `mill-jvm-version` or a module's
 # `jvmId` asks for, into <archive cache>/<path of the archive in the
-# download cache>/. The lock records each archive the lock run unpacked
-# (`archives` of each platform), and this places each one there, unpacked,
-# with its ELF files patched by autoPatchelfHook so that they run on Nix
-# rather than on a filesystem hierarchy standard (FHS) system. Coursier
-# finds the directory and does not unpack the archive again.
+# download cache>/. The lock records each archive the lock run unpacked,
+# for each system, and this places each one there, unpacked, with its ELF
+# files patched by autoPatchelfHook so that they run on Nix rather than on
+# a filesystem hierarchy standard (FHS) system. Coursier finds the
+# directory and does not unpack the archive again.
 #
 #   pkgs        the package set
-#   platform    the part of the lock for the system of `pkgs`
+#   archives    the cache paths of the archives coursier unpacks on the
+#               system of `pkgs`
+#   entries     the download entries of that system
 #   fetchEntry  the fetcher of the purifier library, bound to its fetchers
 {
   pkgs,
-  platform,
+  archives,
+  entries,
   fetchEntry,
 }:
 let
@@ -20,8 +23,8 @@ let
   byPath = builtins.listToAttrs (
     map (a: {
       name = a.path;
-      value = a;
-    }) platform.artifacts
+      value = removeAttrs a [ "systems" ];
+    }) entries
   );
 
   unpack =
@@ -72,5 +75,5 @@ runCommand "mill-coursier-archive-cache"
     ${lib.concatMapStrings (path: ''
       mkdir -p "$out/$(dirname ${lib.escapeShellArg path})"
       ln -s ${unpack path} "$out/"${lib.escapeShellArg path}
-    '') platform.archives}
+    '') archives}
   ''
