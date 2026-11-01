@@ -131,7 +131,7 @@ chooses the test tasks the lock run runs, so that their runtime
 dependencies are locked, and `--tests none` runs none:
 
 ```zsh
-mill-purifier lock --tests 'os.jvm[2.13.18].test.testForked'
+mill-purifier lock --tests 'core.test.testForked'
 ```
 
 The default is every `testForked` task (`__.testForked`). The lockfile
@@ -151,7 +151,7 @@ those modules:
 
 ```zsh
 mill-purifier update
-mill-purifier update org.typelevel:cats-kernel_3
+mill-purifier update com.lihaoyi:upickle_3
 ```
 
 Every command takes `--lockfile <path>` first, for a lockfile kept outside
@@ -268,15 +268,12 @@ It refuses, with the reason in the mechanism:
   through `fetchers.fetchurl`, but a lock run cannot record them.
 - **Files a build downloads outside coursier**: the lock run records what
   coursier downloads, so a file that build code fetches with its own HTTP
-  client is in no lockfile. Two such builds are known. Kotlin's
-  documentation tool, Dokka, fetches the package lists of external API
-  documentation; in the sandbox it warns, and the generated documentation
-  has no links to the Java and Kotlin standard library documentation. The
-  build of os-lib defines `os.zip.apacheAntZipOriginalSource`, which
-  downloads `ant-<version>-sources.jar` from Maven Central with
-  `requests.get` and compiles it into the `os.zip` module, which every
-  JVM module of os-lib depends on. Without network access that task
-  fails, so the build fails in `__.compile`, and the lock run stops there.
+  client, such as a task that calls `requests.get`, is in no lockfile. The
+  sandbox has no network, so such a task fails, and so does a build that
+  depends on it. Kotlin's documentation tool, Dokka, fetches the package
+  lists of external API documentation; in the sandbox it warns, and the
+  generated documentation has no links to the Java and Kotlin standard
+  library documentation.
 - **Systems other than x86_64-linux and aarch64-linux**, for a build that
   asks for a JVM Mill downloads: the lock holds JVM archives for those two.
 - Only modules that extend `PublishModule` become packages: Mill does not
@@ -381,22 +378,63 @@ and reports `no-vcs`, as it does for a source tree without git.
 
 ## Examples
 
-CI locks and builds [fansi](https://github.com/com-lihaoyi/fansi) at the
-tag 0.5.1, commit `387754bc1fc0be0ac787b195490275012d80c683`, as an example
-of the purifier at work on an existing project. Its lockfile is
-`tests/real-world/fansi.lock.json`. The project pins Mill 1.0.0 and has JVM,
-Scala.js and Scala Native modules, each cross-built for Scala 2.12.20,
-2.13.15 and 3.3.6, the MiMa plugin in the meta-build, and a version from
-git. The lock run runs its JVM tests for Scala 2.13.15. The flake builds all
-nine packages and runs those tests in the sandbox, and a CI job locks the
-project again and compares the lockfile. Mill 1.0.0 has no Maven publisher,
-so `release` is not available for it.
+### fansi
 
-The fixtures in `tests/fixtures` cover the source kinds above:
-`simple` (a Scala module with an munit suite, on the nixpkgs JDK) and
-`polyglot` (Java, Kotlin and Scala modules, a custom repository, a
-meta-build plugin, a version from git, a module JVM and the default daemon
-JVM). `docs/development/testing.md` describes the checks.
+[fansi](https://github.com/com-lihaoyi/fansi) is a Scala library for
+strings with ANSI colors. Its build is a Mill build for the JVM, Scala.js
+and Scala Native, cross-built for three Scala versions. To build version
+0.5.1 with Nix, lock a checkout of that tag, and keep the lockfile in the
+repository of your flake:
+
+```zsh
+git clone --branch 0.5.1 https://github.com/com-lihaoyi/fansi
+cd fansi
+mill-purifier lock --lockfile ../fansi.lock.json --tests 'fansi.jvm[2.13.15].test.testForked'
+```
+
+`--tests` names the tests that the lock run runs, so that their
+dependencies are in the lockfile: here, the JVM tests for Scala 2.13.15.
+The flake takes fansi as a source and builds the JVM package for that Scala
+version:
+
+```nix
+{
+  inputs.mill-purifier.url = "github:nix-purifiers/mill-purifier";
+  inputs.nixpkgs.follows = "mill-purifier/nixpkgs";
+  inputs.fansi = {
+    url = "github:com-lihaoyi/fansi/0.5.1";
+    flake = false;
+  };
+
+  outputs = { nixpkgs, mill-purifier, fansi, ... }:
+    let
+      system = "x86_64-linux";
+      pkgs = nixpkgs.legacyPackages.${system};
+      build = mill-purifier.lib.mill-purifier.buildMillProject {
+        inherit pkgs;
+        src = fansi.outPath;
+        lockFile = ./fansi.lock.json;
+        # fansi takes its version from git: this is the commit of the tag.
+        git = {
+          inherit (fansi) rev;
+          revCount = 147;
+          tag = "0.5.1";
+          commitsSinceTag = 0;
+        };
+      };
+    in
+    {
+      packages.${system}.default = build.packages."fansi.jvm[2.13.15]";
+      checks.${system}.tests = build.tests;
+    };
+}
+```
+
+`nix build` builds fansi 0.5.1 for Scala 2.13.15 in Maven layout, and
+`nix flake check` runs the tests. The other modules are
+`build.packages."fansi.js[3.3.6]"`, `build.packages."fansi.native[2.12.20]"`
+and so on. fansi builds with Mill 1.0.0, which has no Maven publisher, so
+`build.release` needs a project on Mill 1.1.0 or later.
 
 ## Credits
 
