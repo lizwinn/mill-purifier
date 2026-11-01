@@ -1,0 +1,7 @@
+out/
+/result*
+.bsp/
+.metals/
+.bloop/
+.idea/
+__pycache__/

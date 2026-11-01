@@ -1,0 +1,22 @@
+//| mill-version: 1.3.1
+//| mill-jvm-version: system
+package build
+import mill.*, scalalib.*, publish.*
+
+object core extends ScalaModule with PublishModule {
+  def scalaVersion = "3.7.3"
+  def mvnDeps = Seq(mvn"com.lihaoyi::upickle:4.1.0")
+  def publishVersion = "0.1.0"
+  def pomSettings = PomSettings(
+    description = "core",
+    organization = "example",
+    url = "https://example.com",
+    licenses = Seq(License.MIT),
+    versionControl = VersionControl.github("example", "core"),
+    developers = Seq()
+  )
+
+  object test extends ScalaTests with TestModule.Munit {
+    def mvnDeps = Seq(mvn"org.scalameta::munit:1.1.0")
+  }
+}
