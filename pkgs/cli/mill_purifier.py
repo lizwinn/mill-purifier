@@ -352,7 +352,9 @@ def lock_platforms(kept, archives, cache, state):
         platforms[system] = {
             "artifacts": lock_entries(platform_cache, [*files, *other_archives]),
         }
-    return platforms, set(own_files) | set(archives)
+    # The lockfile does not depend on the system of the lock run, so the
+    # systems come in alphabetical order, not with the own system first.
+    return dict(sorted(platforms.items())), set(own_files) | set(archives)
 
 
 def nix_system():

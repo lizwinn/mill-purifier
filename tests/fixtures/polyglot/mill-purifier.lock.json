@@ -60,26 +60,6 @@
   "testSelector": "__.testForked",
   "testTasks": [],
   "platforms": {
-    "x86_64-linux": {
-      "artifacts": [
-        {
-          "path": "https/cdn.azul.com/zulu/bin/zulu17.66.19-ca-jdk17.0.19-linux_x64.tar.gz",
-          "hash": "sha256-rTGaq+ZZwY+mP620RgJqfH9SYPAqYVn1EZVzXSDnqhw="
-        },
-        {
-          "path": "https/cdn.azul.com/zulu/bin/zulu25.34.17-ca-jdk25.0.3-linux_x64.tar.gz",
-          "hash": "sha256-OpMjX05bMTIyZHkWIZ6R3FzKC5g1ybUqQEuljENXFpc="
-        },
-        {
-          "path": "https/repo1.maven.org/maven2/io/get-coursier/jvm/indices/index-linux-amd64/0.0.4-201-39a6a6/index-linux-amd64-0.0.4-201-39a6a6.jar",
-          "hash": "sha256-2z1pC7jHlCxowdpWzJz/HJaMg0TSMNTpwtK+MWKUZAE="
-        },
-        {
-          "path": "https/repo1.maven.org/maven2/io/get-coursier/jvm/indices/index-linux-amd64/0.0.4-201-39a6a6/index-linux-amd64-0.0.4-201-39a6a6.pom",
-          "hash": "sha256-uPxyAmVErVBgPeyypEQwcHrP24KpMgxCzKSAl7u/lIA="
-        }
-      ]
-    },
     "aarch64-linux": {
       "artifacts": [
         {
@@ -97,6 +77,26 @@
         {
           "path": "https/repo1.maven.org/maven2/io/get-coursier/jvm/indices/index-linux-arm64/0.0.4-201-39a6a6/index-linux-arm64-0.0.4-201-39a6a6.pom",
           "hash": "sha256-iRO3fq3GdoLoumV0YkQTyUxo5ZBqm3tXgkWXnYDufcs="
+        }
+      ]
+    },
+    "x86_64-linux": {
+      "artifacts": [
+        {
+          "path": "https/cdn.azul.com/zulu/bin/zulu17.66.19-ca-jdk17.0.19-linux_x64.tar.gz",
+          "hash": "sha256-rTGaq+ZZwY+mP620RgJqfH9SYPAqYVn1EZVzXSDnqhw="
+        },
+        {
+          "path": "https/cdn.azul.com/zulu/bin/zulu25.34.17-ca-jdk25.0.3-linux_x64.tar.gz",
+          "hash": "sha256-OpMjX05bMTIyZHkWIZ6R3FzKC5g1ybUqQEuljENXFpc="
+        },
+        {
+          "path": "https/repo1.maven.org/maven2/io/get-coursier/jvm/indices/index-linux-amd64/0.0.4-201-39a6a6/index-linux-amd64-0.0.4-201-39a6a6.jar",
+          "hash": "sha256-2z1pC7jHlCxowdpWzJz/HJaMg0TSMNTpwtK+MWKUZAE="
+        },
+        {
+          "path": "https/repo1.maven.org/maven2/io/get-coursier/jvm/indices/index-linux-amd64/0.0.4-201-39a6a6/index-linux-amd64-0.0.4-201-39a6a6.pom",
+          "hash": "sha256-uPxyAmVErVBgPeyypEQwcHrP24KpMgxCzKSAl7u/lIA="
         }
       ]
     }

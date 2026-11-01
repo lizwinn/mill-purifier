@@ -174,6 +174,8 @@ class JvmIndexTest(unittest.TestCase):
                 platforms, specific = mp.lock_platforms([own_jar, own_pom, archive, other_library], [archive], cache, state)
 
             self.assertEqual(specific, {own_jar, own_pom, archive})
+            # The systems come in alphabetical order, whichever system ran the lock.
+            self.assertEqual(list(platforms), ["aarch64-linux", "x86_64-linux"])
             self.assertEqual(sorted(e["path"] for e in platforms["x86_64-linux"]["artifacts"]), sorted([own_jar, own_pom, archive]))
             arm = platforms["aarch64-linux"]
             arm_archive = coursier_cache.cache_path("https://cdn.azul.com/zulu/bin/zulu17-linux_aarch64.tar.gz")
