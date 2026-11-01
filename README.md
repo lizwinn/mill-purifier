@@ -60,8 +60,9 @@ packages it needs from the package set by name, such as `stdenvNoCC` and
   that sends credentials or uses a company mirror. The default is the
   fetchers of nixpkgs.
 - `lockFile`: the lockfile. The default is `mill-purifier.lock.json` in
-  `src`, and a lockfile given here replaces any copy in `src`, so a
-  packaging flake can build a project whose author keeps no lockfile.
+  `src`, which is the recommended setup: commit the lockfile to the
+  repository of the project. A packaging flake for a project whose author
+  keeps no lockfile passes its own here, and it replaces any copy in `src`.
 - `jdk`: the JDK that runs Mill's launcher. The default is the headless
   OpenJDK 21 that `nix/lib/jdk.nix` names, which the `mill-purifier`
   command also uses.
@@ -391,9 +392,11 @@ and reports `no-vcs`, as it does for a source tree without git.
 
 [fansi](https://github.com/com-lihaoyi/fansi) is a Scala library for
 strings with ANSI colors. Its build is a Mill build for the JVM, Scala.js
-and Scala Native, cross-built for three Scala versions. To build version
-0.5.1 with Nix, lock a checkout of that tag, and keep the lockfile in the
-repository of your flake:
+and Scala Native, cross-built for three Scala versions. The repository of
+fansi has no lockfile, so this example is a packaging flake: it locks a
+checkout of the tag 0.5.1, and keeps the lockfile in the repository of the
+flake. In your own project, you commit `mill-purifier.lock.json` to the
+repository and pass no `lockFile`.
 
 ```zsh
 git clone --branch 0.5.1 https://github.com/com-lihaoyi/fansi
