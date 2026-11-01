@@ -20,6 +20,14 @@ Nix sandbox:
   shim (tagged and untagged), a module JVM, and Mill's default daemon JVM.
 - `definition-hash` checks that the Nix side computes the definition hash
   the command wrote.
+- `publisher-available` checks which Mill versions have the Maven
+  publisher: 1.1.0 and later do, the 1.0 releases and 1.1.0-RC1 do not.
+- `real-world-fansi-*` build fansi 0.5.1 from `tests/real-world/fansi.lock.json`:
+  its JVM tests (`real-world-fansi-tests`), all nine packages
+  (`real-world-fansi-packages`), the version from the git shim
+  (`real-world-fansi-version`), and the message of `release` on Mill 1.0.0
+  (`real-world-fansi-release`). `real-world-fansi-source` is the pinned
+  source tree, which `tests/relock-real-world.sh` uses.
 - The conformance checks of the purifier contract that run in the sandbox:
   `conformance-stale`, `conformance-tampered`, `conformance-malformed`,
   `conformance-other-version`, `conformance-missing`,
@@ -28,10 +36,12 @@ Nix sandbox:
   `mill-purifier mill` after a prefetch, with no network).
 - `treefmt` checks the Nix formatting.
 
-Three conformance checks need what the sandbox does not have, so they are
-jobs of the same name in `.github/workflows/check.yml`, on both
-architectures:
+Four checks need what the sandbox does not have, so they are jobs in
+`.github/workflows/check.yml`, on both architectures:
 
+- `conformance-relock-real-world` runs `tests/relock-real-world.sh`, which
+  locks fansi again from its pinned source and compares the lockfile with
+  the committed one.
 - `conformance-relock` runs `tests/relock-fixtures.sh`, which locks every
   fixture again with the network, and fails when a lockfile changed. For
   `tests/fixtures/ranged`, whose dependency has a version range, this
@@ -46,8 +56,10 @@ architectures:
   (`nix build --rebuild`) and fails when the outputs differ.
 
 After a change to a fixture or to the lock run, run
-`tests/relock-fixtures.sh` from the repository root and commit the new
-lockfiles. When Maven Central rate-limits the machine, set
+`tests/relock-fixtures.sh` and `tests/relock-real-world.sh` from the
+repository root and commit the new lockfiles. The second script prints the
+difference to the committed lockfile and leaves it unchanged: copy the
+lockfile it wrote into `tests/real-world`, or lock with `--lockfile`. When Maven Central rate-limits the machine, set
 `MILL_PURIFIER_MAVEN_CENTRAL_MIRROR` (see the README).
 
 `pkgs/cli/coursier_cache.py` and its tests are shared with the scala-cli

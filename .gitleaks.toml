@@ -1,0 +1,15 @@
+# The default rules of gitleaks, with one allowlist entry.
+#
+# A lockfile of mill-purifier names the files a module publishes by a `key`,
+# such as "fansi_native0.5_2.12-javadoc.jar": the file name without the
+# version. The generic-api-key rule takes a long key for a credential.
+title = "mill-purifier"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "The file name of a published artifact in a lockfile"
+targetRules = ["generic-api-key"]
+paths = ['''lock\.json$''']
+regexes = ['''"key": "[A-Za-z0-9_.\-]+\.(jar|pom|xml|module)"''']

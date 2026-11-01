@@ -64,6 +64,13 @@ MAVEN_CENTRAL_MIRROR = "https://maven-central.storage-download.googleapis.com/ma
 # Directories that never take part in a build, as buildMillProject's
 # default source filter leaves them out.
 SKIPPED_DIRS = {"out", ".git", ".bsp", ".idea", ".metals", ".bloop", ".mill-purifier"}
+# The XDG base directories of a lock run, under its home directory.
+XDG_DIRECTORIES = {
+    "XDG_CACHE_HOME": ".cache",
+    "XDG_CONFIG_HOME": ".config",
+    "XDG_DATA_HOME": ".local/share",
+    "XDG_STATE_HOME": ".local/state",
+}
 # The directory beside the lockfile that holds the GC roots of a prefetch.
 PREFETCH_DIR = ".mill-purifier"
 
@@ -184,6 +191,14 @@ def mill_env(cache, archive_cache, home, tmp, offline):
     jvm = [f"-Djava.io.tmpdir={tmp}"]
     if home is not None:
         jvm.append(f"-Duser.home={home}")
+        # The launcher and Mill put caches and settings under HOME and the
+        # XDG directories, which a lock run takes from its own directory and
+        # not from the user running it.
+        env["HOME"] = str(home)
+        for variable, subdirectory in XDG_DIRECTORIES.items():
+            env[variable] = str(home / subdirectory)
+        env.pop("XDG_CONFIG_DIRS", None)
+        env.pop("XDG_DATA_DIRS", None)
     if not offline:
         jvm += coursier_cache.java_proxy_properties(env)
     # Mill passes JAVA_OPTS to the JVM it starts for its daemon.
@@ -500,6 +515,19 @@ def content_hash(lock_data):
     return "sha256:" + hashlib.sha256(text.encode()).hexdigest()
 
 
+def mill_version_key(version):
+    """A sort key for a Mill version: its numbers, then 1 for a release and
+    0 for a pre-release such as 1.1.0-RC1, which is older than 1.1.0."""
+    numbers = tuple(int(n) for n in re.findall(r"\d+", version.split("-", 1)[0]))
+    return numbers, 0 if "-" in version else 1
+
+
+FIRST_MILL_1 = ((1, 0, 0), 0)
+# Mill 1.1.0 is the first release with mill.javalib.MavenPublishModule. The
+# same decision is in nix/lib/publisher-available.nix.
+MIN_PUBLISHER_MILL_VERSION = ((1, 1, 0), 1)
+
+
 def listing_of(path, name):
     """Whether the cache path of a version listing is the listing of the
     Maven module `name`, written `org:artifact`."""
@@ -564,6 +592,14 @@ def lock(root, lock_file, tests=None, updated=None):
     version = mill_config(root, "mill-version")
     if not version:
         raise Failure("the build does not pin a Mill version; set `//| mill-version: <version>` in build.mill or write .mill-version")
+    if mill_version_key(version) < FIRST_MILL_1:
+        raise Failure(f"the build pins Mill {version}; this purifier supports Mill 1.0.0 and later")
+    has_publisher = mill_version_key(version) >= MIN_PUBLISHER_MILL_VERSION
+    if not has_publisher:
+        log(
+            f"Mill {version} has no mill.javalib.MavenPublishModule, which is in Mill 1.1.0 and later: "
+            f"the lock run skips the publish step, and `release` is not available for this build"
+        )
 
     state = root / "out" / "mill-purifier"
     work = state / "lock-run"
@@ -613,7 +649,7 @@ def lock(root, lock_file, tests=None, updated=None):
         log("running the tests, so their runtime dependencies are locked")
         if run_mill(work, env, jvm, launcher, plus(test_tasks)).returncode != 0:
             raise Failure("the lock run failed running the tests")
-    if publish_tasks:
+    if publish_tasks and has_publisher:
         # buildMillProject's `repository` publishes with Mill's Maven
         # publisher, offline; publishing once here locks what it needs.
         log("publishing to a local repository with mill.javalib.MavenPublishModule, so its dependencies are locked")

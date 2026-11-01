@@ -6,7 +6,7 @@
 #   git describe --exact-match --tags --always <rev>
 #   git describe --abbrev=0 --tags
 #   git rev-list <rev> [--not <tag>] --count
-#   git diff HEAD
+#   git diff HEAD   (Mill 1.0 asks for git diff, with no argument)
 #
 # `git` is the attribute set buildMillProject takes: `rev` (the commit),
 # `revCount` (the number of commits it has, which a flake's `self` holds
@@ -61,7 +61,7 @@ pkgs.writeShellScriptBin "git" ''
       "rev-list "${q rev}" --count")
         echo ${toString revCount} ;;
     ''}
-    "diff HEAD")
+    "diff HEAD" | "diff")
       ;;
     *)
       ${fail} ;;

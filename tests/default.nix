@@ -111,6 +111,32 @@ let
     src = ./fixtures/polyglot;
     git = polyglotGit 5;
   };
+
+  # A real-world project: fansi 0.5.1, on Mill 1.0.0. The lockfile in
+  # tests/real-world comes from `mill-purifier lock` with the selector
+  # fansi.jvm[2.13.15].test.testForked (tests/relock-real-world.sh). Mill 1.0.0
+  # has no Maven publisher, so `release` is unavailable for this build.
+  fansiRev = "387754bc1fc0be0ac787b195490275012d80c683";
+  # The build reads the source while Nix evaluates, so the source is
+  # fetched at evaluation time and is the same on every system, which a
+  # derivation of fetchFromGitHub is not for a system other than the host.
+  fansiSource = builtins.fetchTree {
+    type = "github";
+    owner = "com-lihaoyi";
+    repo = "fansi";
+    rev = fansiRev;
+    narHash = "sha256-51QTUIXv6srcK9w7y9f4uo57kj5Fnlv0CO1PdoPWw6s=";
+  };
+  fansi = build {
+    src = fansiSource.outPath;
+    lockFile = ./real-world/fansi.lock.json;
+    git = {
+      rev = fansiRev;
+      revCount = 147;
+      tag = "0.5.1";
+      commitsSinceTag = 0;
+    };
+  };
 in
 {
   inherit cli;
@@ -179,6 +205,31 @@ in
         ]
       || throw "read-lock: readLock gives purifier ${lock.purifier}, outputs ${builtins.toJSON (builtins.attrNames lock.outputs)} and systems ${builtins.toJSON systems}";
     pkgs.runCommand "read-lock" { } "touch $out";
+
+  # Mill 1.1.0 is the first release with the Maven publisher: the 1.0
+  # releases and 1.1.0-RC1 have none, and `release` says so for them.
+  publisher-available =
+    let
+      available = import ../nix/lib/publisher-available.nix { inherit lib; };
+      without = [
+        "0.12.14"
+        "1.0.0"
+        "1.0.6"
+        "1.1.0-RC1"
+        "1.1.0-RC4"
+      ];
+      with' = [
+        "1.1.0"
+        "1.1.4"
+        "1.3.1"
+        "1.10.0"
+        "1.2.0-RC1"
+        "2.0.0"
+      ];
+      wrong = lib.filter available without ++ lib.filter (v: !(available v)) with';
+    in
+    assert wrong == [ ] || throw "publisher-available: wrong for ${builtins.toJSON wrong}";
+    pkgs.runCommand "publisher-available" { } "touch $out";
 
   # The Nix side computes the definition hash the command wrote.
   definition-hash =
@@ -257,6 +308,25 @@ in
         mill-purifier mill --no-daemon --ticker false core.compile + core.test
         touch $out
       '';
+
+  # fansi 0.5.1: the JVM tests the lock run ran, every package (JVM, JS and
+  # Scala Native modules for three Scala versions), and the version from the
+  # git shim, which is the tag.
+  real-world-fansi-source =
+    pkgs.runCommand "real-world-fansi-source" { }
+      "cp -r ${fansiSource.outPath} $out";
+  real-world-fansi-tests = fansi.tests;
+  real-world-fansi-packages = pkgs.linkFarm "real-world-fansi-packages" (
+    lib.mapAttrsToList (id: package: {
+      name = id;
+      path = package;
+    }) fansi.packages
+  );
+  real-world-fansi-version =
+    hasArtifacts "real-world-fansi-version" fansi.packages."fansi.jvm[2.13.15]"
+      "com/lihaoyi/fansi_2.13/0.5.1";
+  # Mill 1.0.0 has no Maven publisher, and `release` says so.
+  real-world-fansi-release = failsToEvaluate "real-world-fansi-release" fansi.release.drvPath;
 }
 // lib.optionalAttrs (polyglot.lock.mill.archives ? ${pkgs.stdenv.hostPlatform.system}) {
   polyglot-greeter-package = polyglot.packages.greeter;

@@ -16,7 +16,9 @@
 #   tests          the test tasks the lock run ran, run in the sandbox
 #   release        every package published by Mill's own Maven publisher
 #                  (mill.javalib.MavenPublishModule) into a Maven
-#                  repository: what `mill-purifier publish` uploads
+#                  repository. Mill 1.1.0 is the first release with that
+#                  publisher, so for a build on an older Mill, `release`
+#                  fails when it is evaluated and says so
 #   fetches        the entries of the lock: the purifier library entries the
 #                  build fetches, those of one system carrying `systems`
 #   runTask        runTask name [ args ]: a derivation that runs Mill with
@@ -152,6 +154,8 @@ let
     # that java.util.Properties.store writes (Java 18 and later), as in the
     # files Mill's BuildInfo plugin writes.
     export JAVA_OPTS="-Duser.home=$HOME -Djava.io.tmpdir=$TMPDIR/java-tmp -Djava.properties.date=1980-01-01T00:00:00Z"
+    # The launcher of Mill 1.0 runs `which`.
+    export PATH="${pkgs.which}/bin:$PATH"
     ${lib.optionalString (gitShim != null) ''export PATH="${gitShim}/bin:$PATH"''}
     if [ ! -d "$COURSIER_CACHE" ]; then
       mkdir -p "$HOME" "$XDG_RUNTIME_DIR" "$TMPDIR/java-tmp" "$COURSIER_CACHE" "$COURSIER_ARCHIVE_CACHE"
@@ -314,7 +318,12 @@ let
   # repository, offline: the lock run publishes the same way once, so the
   # publisher's dependencies are in the lock. The publisher wants a user
   # name and a password even for a file: repository, and reads neither.
-  release = stdenvNoCC.mkDerivation {
+  release =
+    if import ./publisher-available.nix { inherit lib; } millVersion then
+      releaseDerivation
+    else
+      throw "mill-purifier: the build pins Mill ${millVersion}, which has no mill.javalib.MavenPublishModule, the Maven publisher that `release` uses; Mill 1.1.0 and later have it. The packages and the tests of this build work.";
+  releaseDerivation = stdenvNoCC.mkDerivation {
     name = "mill-release";
     src = publishBuild;
     nativeBuildInputs = [ jdk' ];

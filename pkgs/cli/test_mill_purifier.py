@@ -301,6 +301,52 @@ class PrefetchStateTest(unittest.TestCase):
             self.assertIsNone(mp.prefetched(lock_file, {"contentHash": "sha256:1"}))
 
 
+class MillVersionTest(unittest.TestCase):
+    def test_the_first_release_with_the_maven_publisher_is_1_1_0(self):
+        for version in ("1.0.0", "1.0.6", "1.1.0-RC1", "1.1.0-RC4", "0.12.14"):
+            self.assertLess(mp.mill_version_key(version), mp.MIN_PUBLISHER_MILL_VERSION, version)
+        for version in ("1.1.0", "1.1.1", "1.3.1", "2.0.0", "1.2.0-RC1"):
+            self.assertGreaterEqual(mp.mill_version_key(version), mp.MIN_PUBLISHER_MILL_VERSION, version)
+
+    def test_mill_1_starts_at_1_0_0(self):
+        self.assertLess(mp.mill_version_key("0.12.14"), mp.FIRST_MILL_1)
+        self.assertGreaterEqual(mp.mill_version_key("1.0.0"), mp.FIRST_MILL_1)
+
+    def test_lock_refuses_mill_0_before_running_anything(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write(root, "build.mill", "//| mill-version: 0.12.14\npackage build\n")
+            with self.assertRaisesRegex(mp.Failure, "Mill 0.12.14.*1.0.0 and later"):
+                mp.lock(root, root / mp.LOCK_FILE)
+
+
+class MillEnvTest(unittest.TestCase):
+    USER = {
+        "HOME": "/home/user",
+        "XDG_CACHE_HOME": "/home/user/.local/cache",
+        "XDG_DATA_HOME": "/home/user/.local/data",
+        "XDG_DATA_DIRS": "/usr/share",
+        "XDG_CONFIG_DIRS": "/etc/xdg",
+        "PATH": "/usr/bin",
+    }
+
+    def env(self, home):
+        with mock.patch.dict(os.environ, self.USER, clear=True), mock.patch.object(mp, "jdk_home", return_value=Path("/jdk")):
+            return mp.mill_env(Path("/c"), Path("/a"), home, Path("/t"), offline=True)[0]
+
+    def test_a_lock_run_takes_home_and_the_xdg_directories_from_its_home(self):
+        env = self.env(Path("/lock-home"))
+        self.assertEqual(env["HOME"], "/lock-home")
+        self.assertEqual(env["XDG_CACHE_HOME"], "/lock-home/.cache")
+        self.assertEqual(env["XDG_DATA_HOME"], "/lock-home/.local/share")
+        self.assertNotIn("XDG_DATA_DIRS", env)
+        self.assertNotIn("XDG_CONFIG_DIRS", env)
+
+    def test_the_everyday_loop_keeps_the_environment_of_the_user(self):
+        env = self.env(None)
+        self.assertEqual({k: env[k] for k in self.USER if k != "PATH"}, {k: v for k, v in self.USER.items() if k != "PATH"})
+
+
 class SeedListingsTest(unittest.TestCase):
     LISTING = "https/repo1.maven.org/maven2/com/lihaoyi/sourcecode_3/maven-metadata.xml"
     OTHER = "https/repo1.maven.org/maven2/org/scalameta/munit_3/maven-metadata.xml"

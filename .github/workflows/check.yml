@@ -43,6 +43,20 @@ jobs:
       - name: Compare the lockfiles
         run: git diff --exit-code -- 'tests/fixtures/*/mill-purifier.lock.json'
 
+  # A lock run of the real-world project gives the committed lockfile.
+  conformance-relock-real-world:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v5
+      - uses: cachix/install-nix-action@v31
+      - name: Lock the real-world projects and compare the lockfiles
+        run: tests/relock-real-world.sh
+
   # `mill-purifier update` moves a version range of a fixture to a newer
   # version, and the lockfile it writes is current.
   conformance-update:

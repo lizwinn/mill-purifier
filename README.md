@@ -258,6 +258,11 @@ It refuses, with the reason in the mechanism:
 - **Mill 0.x**: Mill 1.x changed the build file format, the launcher and
   the way Mill resolves itself, and the lock run and the sandboxed build
   rely on the 1.x behavior.
+- **`release` on Mill before 1.1.0**: Mill 1.1.0 is the first release with
+  `mill.javalib.MavenPublishModule`, the Maven publisher that the lock run
+  runs once and that `release` uses. A build on Mill 1.0.x or `1.1.0-RC1`
+  locks without that step, and its packages and tests build. Its `release`
+  fails when evaluated, with a message that names Mill 1.1.0.
 - **Downloads that need credentials**: the lockfile records URLs and
   hashes, and no credentials. The build fetches them with credentials
   through `fetchers.fetchurl`, but a lock run cannot record them.
@@ -376,11 +381,18 @@ and reports `no-vcs`, as it does for a source tree without git.
 
 ## Real-world projects
 
-No real-world project is locked yet. The first candidate was
-[os-lib](https://github.com/com-lihaoyi/os-lib) at commit
-`8871ab0bda9bbcc4edbef9b1a402eb4c47ef9398` on Mill 1.3.1. Its build
-downloads a source jar outside coursier, so this purifier refuses it. The
-reason is under
+[fansi](https://github.com/com-lihaoyi/fansi) at the tag 0.5.1, commit
+`387754bc1fc0be0ac787b195490275012d80c683`, is locked in
+`tests/real-world/fansi.lock.json`. It pins Mill 1.0.0 and has JVM, Scala.js
+and Scala Native modules, each cross-built for Scala 2.12.20, 2.13.15 and
+3.3.6, the MiMa plugin in the meta-build, and a version from git. The lock
+run runs its JVM tests for Scala 2.13.15. The flake builds all nine
+packages and runs those tests in the sandbox, and a CI job locks the
+project again and compares the lockfile. Mill 1.0.0 has no Maven publisher,
+so `release` is not available for it.
+
+[os-lib](https://github.com/com-lihaoyi/os-lib) is refused: its build
+downloads a source jar outside coursier. The reason is under
 [Sources supported and refused](#sources-supported-and-refused).
 
 The fixtures in `tests/fixtures` cover the source kinds above:
