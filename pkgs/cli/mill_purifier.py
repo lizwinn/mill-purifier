@@ -955,6 +955,12 @@ def main(argv):
         lock_file = Path(rest[1]).resolve()
         rest = rest[2:]
     try:
+        if verb == "mill" and not lock_file.exists():
+            log('warning: no mill-purifier.lock.json found; running mill impurely. Run `mill-purifier lock` to use Nix-resolved dependencies.')
+            command = os.environ.get("MILL_PURIFIER_MILL") or shutil.which("mill")
+            if command is None:
+                raise Failure("no ordinary mill found; install Mill or set MILL_PURIFIER_MILL")
+            os.execvp(command, [command, *rest])
         build_file(root)
         if verb == "lock":
             tests = None

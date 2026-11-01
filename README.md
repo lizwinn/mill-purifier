@@ -1,47 +1,132 @@
 # mill-purifier
 
-A command and a Nix library that build a [Mill](https://mill-build.org)
-project in the Nix sandbox. Mill still plans the build. `mill-purifier lock`
-records every file the build downloads in a lockfile, together with the
-modules the build publishes, and Nix builds the project from that lockfile,
-offline, without generated Nix files in the repository. mill-purifier is
-part of [nix-purifiers](https://nix-purifiers.github.io) and meets its
-[purifier contract](https://github.com/nix-purifiers/purifier/blob/main/CONTRACT.md).
-It supports Mill 1.x, and Java, Kotlin and Scala modules.
+mill-purifier keeps Mill's development workflow on locked,
+Nix-resolved dependencies. Use the normal build and test commands in your
+working tree; building the project itself in the Nix sandbox is an
+optional next step.
+
+It follows the [purifier contract](https://github.com/nix-purifiers/purifier/blob/main/CONTRACT.md).
+
+## Installation
+
+Install the integration into your Nix profile once:
+
+```sh
+nix profile install 'github:nix-purifiers/mill-purifier'
+```
+
+The required wrapper is `mill-purifier mill`; pass your usual tool
+arguments after it. With no purifier lockfile, it warns on standard error
+and runs the ordinary tool with impure resolution.
+
+`nix shell` makes an integration available temporarily instead of installing
+it. Keep using the activation steps below where a project environment or
+prefetched cache is required.
 
 ## Quickstart
 
-Lock the build from its root and commit `mill-purifier.lock.json` to the
-repository of the project:
+Install Nix, then run the following from your existing project's root.
+The setup prepares the locked dependencies and the integration that
+Mill's normal commands use:
 
 ```zsh
-nix run github:nix-purifiers/mill-purifier -- lock
+nix shell github:nix-purifiers/mill-purifier
+mill-purifier lock
+mill-purifier mill core.compile
+mill-purifier mill core.test
 ```
 
-The build must pin its Mill version, in the `//| mill-version:` header of
-`build.mill` or in `.mill-version`.
+Commit the lockfiles that the lock command writes, including the build
+tool's own lockfile when it has one. Keep using the project's usual build,
+test and editor commands with this setup. Nix provides the locked
+dependencies; the development commands above run outside the Nix sandbox.
+No project Nix files are needed for this workflow.
 
-Build the project with Nix from the same directory. This adds no Nix file to
-the project:
+Replace `core` with a module of your build.
+
+Sandboxed builds of the whole project are an optional
+[next step](#building-the-project-with-nix).
+
+## Development loop
+
+Mill has no plugin mechanism that reaches every build, so the command
+wraps Mill from outside, and the development loop goes through
+`mill-purifier mill`, which runs Mill's own launcher with its arguments,
+offline, on the locked downloads:
 
 ```zsh
-nix build --impure --expr '
-  let
-    purifier = builtins.getFlake "github:nix-purifiers/mill-purifier";
-    pkgs = import purifier.inputs.nixpkgs {
-      system = builtins.currentSystem;
-      overlays = [ purifier.overlays.default ];
-    };
-  in
-  (pkgs.mill-purifier.buildMillProject { src = ./.; }).packages.core'
+mill-purifier mill core.compile
+mill-purifier mill core.test
+mill-purifier mill core.run
 ```
 
-This uses the purifier's pinned nixpkgs, matching the lock command above.
-To build with ambient `<nixpkgs>` from your Nix search path instead,
-replace `import purifier.inputs.nixpkgs` with `import <nixpkgs>`.
-Both forms need no Nix files in your project. The build tool and language
-versions must match the lockfile; with ambient nixpkgs, lock with the
-purifier from that package set or pass a compatible toolchain to the builder.
+To add or upgrade a dependency, edit `build.mill`, run `mill-purifier
+lock`, and commit the lockfile. Until then `mill-purifier mill` warns that
+the build definition changed, and a dependency that is not in the lock
+fails to resolve, after which the command names `mill-purifier lock`.
+
+`mill-purifier lock` runs the build in a copy without its `out/` directory,
+so a lock never depends on what an earlier run left. `--tests <selector>`
+chooses the test tasks the lock run runs, so that their runtime
+dependencies are locked, and `--tests none` runs none:
+
+```zsh
+mill-purifier lock --tests 'core.test.testForked'
+```
+
+The default is every `testForked` task (`__.testForked`). The lockfile
+records the selector (`testSelector`), a later `lock` without `--tests`
+uses it again, and `tests` runs the test tasks the lock run ran. A test
+that needs tools outside the JVM, such as a Scala Native test that needs
+clang, needs them in the lock run and in the sandbox.
+
+Mill has no lockfile of its own, and a version in `build.mill` names one
+version, except for a version range such as `[2.9.0,2.11.0)`. Coursier
+resolves a range against the version listing of the module
+(`maven-metadata.xml`), and the lockfile records each listing that the
+build needs. `lock` keeps the resolution: the lock run reads the listings
+from the lockfile, so a range resolves as it did. `update` reads them
+afresh and relocks, and with `org:artifact` names it does so only for
+those modules:
+
+```zsh
+mill-purifier update
+mill-purifier update com.lihaoyi:upickle_3
+```
+
+Every command takes `--lockfile <path>` first, for a lockfile kept outside
+the build. Without it, a command reads the environment variable
+`MILL_PURIFIER_LOCKFILE`, so the dev shell of a packaging flake can set it
+to the path the flake passes as `lockFile`.
+
+A Mill daemon keeps the environment it was started with. Stop a daemon
+that plain `./mill` started (`./mill shutdown`) before using
+`mill-purifier mill`, and the other way around.
+
+### Publishing
+
+```zsh
+mill-purifier publish mill.javalib.SonatypeCentralPublishModule/
+```
+
+builds every package with Nix, writes a Mill build whose `publishArtifacts`
+tasks return the files of the packages, and runs the publisher that you
+name on it, so the upload goes through the publisher of your choice and
+not through `release`.
+Every Mill publisher takes the tasks to publish as `--publishArtifacts`,
+and the command adds `--publishArtifacts __.publishArtifacts` unless the
+arguments name it. Credentials and signing work as they do for the
+publisher in a plain Mill build, through its environment variables and
+arguments. Resolution runs online and starts from the locked downloads,
+because a publisher can need libraries that the lock run did not use.
+
+## Building the project with Nix
+
+Once the native development workflow is working, you can also build and
+test the whole project in the Nix sandbox. For this step, keep a flake or
+another Nix build definition in the project's repository, or maintain an
+external packaging repository that points at its sources and lockfiles.
+The builder consumes the same lockfiles as the development workflow.
 
 The command builds the module `core`. The overlay of the flake,
 `overlays.default`, adds one attribute to the package set: the scope
@@ -141,78 +226,29 @@ It also sets `java.properties.date`, which replaces the date in the
 `.properties` files that `java.util.Properties` writes, such as those of
 Mill's BuildInfo plugin.
 
-## Development loop
+### One-off builds without a project Nix file
 
-Mill has no plugin mechanism that reaches every build, so the command
-wraps Mill from outside, and the development loop goes through
-`mill-purifier mill`, which runs Mill's own launcher with its arguments,
-offline, on the locked downloads:
+For an ad hoc build, the builder can also be evaluated directly from the
+project root. Replace the example package name with one from your project:
 
 ```zsh
-mill-purifier mill core.compile
-mill-purifier mill core.test
-mill-purifier mill core.run
+nix build --impure --expr '
+  let
+    purifier = builtins.getFlake "github:nix-purifiers/mill-purifier";
+    pkgs = import purifier.inputs.nixpkgs {
+      system = builtins.currentSystem;
+      overlays = [ purifier.overlays.default ];
+    };
+  in
+  (pkgs.mill-purifier.buildMillProject { src = ./.; }).packages.core'
 ```
 
-To add or upgrade a dependency, edit `build.mill`, run `mill-purifier
-lock`, and commit the lockfile. Until then `mill-purifier mill` warns that
-the build definition changed, and a dependency that is not in the lock
-fails to resolve, after which the command names `mill-purifier lock`.
-
-`mill-purifier lock` runs the build in a copy without its `out/` directory,
-so a lock never depends on what an earlier run left. `--tests <selector>`
-chooses the test tasks the lock run runs, so that their runtime
-dependencies are locked, and `--tests none` runs none:
-
-```zsh
-mill-purifier lock --tests 'core.test.testForked'
-```
-
-The default is every `testForked` task (`__.testForked`). The lockfile
-records the selector (`testSelector`), a later `lock` without `--tests`
-uses it again, and `tests` runs the test tasks the lock run ran. A test
-that needs tools outside the JVM, such as a Scala Native test that needs
-clang, needs them in the lock run and in the sandbox.
-
-Mill has no lockfile of its own, and a version in `build.mill` names one
-version, except for a version range such as `[2.9.0,2.11.0)`. Coursier
-resolves a range against the version listing of the module
-(`maven-metadata.xml`), and the lockfile records each listing that the
-build needs. `lock` keeps the resolution: the lock run reads the listings
-from the lockfile, so a range resolves as it did. `update` reads them
-afresh and relocks, and with `org:artifact` names it does so only for
-those modules:
-
-```zsh
-mill-purifier update
-mill-purifier update com.lihaoyi:upickle_3
-```
-
-Every command takes `--lockfile <path>` first, for a lockfile kept outside
-the build. Without it, a command reads the environment variable
-`MILL_PURIFIER_LOCKFILE`, so the dev shell of a packaging flake can set it
-to the path the flake passes as `lockFile`.
-
-A Mill daemon keeps the environment it was started with. Stop a daemon
-that plain `./mill` started (`./mill shutdown`) before using
-`mill-purifier mill`, and the other way around.
-
-### Publishing
-
-```zsh
-mill-purifier publish mill.javalib.SonatypeCentralPublishModule/
-```
-
-builds every package with Nix, writes a Mill build whose `publishArtifacts`
-tasks return the files of the packages, and runs the publisher that you
-name on it, so the upload goes through the publisher of your choice and
-not through `release`.
-Every Mill publisher takes the tasks to publish as `--publishArtifacts`,
-and the command adds `--publishArtifacts __.publishArtifacts` unless the
-arguments name it. Credentials and signing work as they do for the
-publisher in a plain Mill build, through its environment variables and
-arguments. Resolution runs online and starts from the locked downloads,
-because a publisher can need libraries that the lock run did not use.
+This uses the purifier's pinned nixpkgs, matching the lock command above.
+To build with ambient `<nixpkgs>` from your Nix search path instead,
+replace `import purifier.inputs.nixpkgs` with `import <nixpkgs>`.
+Both forms need no Nix files in your project. The build tool and language
+versions must match the lockfile; with ambient nixpkgs, lock with the
+purifier from that package set or pass a compatible toolchain to the builder.
 
 ## Working offline
 
@@ -412,6 +448,11 @@ the version of an old tag. Without `git`, VcsVersion sees no repository
 and reports `no-vcs`, as it does for a source tree without git.
 
 ## Examples
+
+For day-to-day work on these projects, use the native-tool setup and
+commands in [Quickstart](#quickstart) and [Development loop](#development-loop).
+The Nix expressions below show optional sandboxed packaging of those
+projects.
 
 ### fansi
 

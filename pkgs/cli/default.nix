@@ -9,6 +9,7 @@
   makeWrapper,
   python3,
   curl,
+  mill,
   callPackage,
   # The JDK the lock run runs Mill's launcher on, which the builds of
   # buildMillProject also take (nix/lib/jdk.nix).
@@ -53,6 +54,7 @@ stdenvNoCC.mkDerivation {
     cp -r ${../../nix/lib} $out/libexec/mill-purifier/nix
     makeWrapper ${python3.interpreter} $out/bin/mill-purifier \
       --add-flags "$out/libexec/mill-purifier/mill_purifier.py" \
+      --set MILL_PURIFIER_MILL ${lib.getExe mill} \
       --set MILL_PURIFIER_JDK ${jdk.home} \
       --set MILL_PURIFIER_LIB "$out/libexec/mill-purifier/nix" \
       --set MILL_PURIFIER_NIXPKGS ${path} \
