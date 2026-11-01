@@ -15,9 +15,10 @@
 }:
 let
   inherit (pkgs) lib;
-  # Every build goes through buildMillProject of a package set that the
-  # overlay applies to, as the build of a consumer does.
-  build = (pkgs.extend overlay).buildMillProject;
+  # Every build goes through buildMillProject in the mill-purifier scope of
+  # a package set that the overlay applies to, as the build of a consumer
+  # does.
+  build = (pkgs.extend overlay).mill-purifier.buildMillProject;
 
   # The output of a Mill run must equal `expected`.
   prints =

@@ -3,13 +3,15 @@
 #
 # The file is a package for callPackage: the first argument set is what it
 # takes from the package set, and the result is the builder. The
-# mill-purifier overlay (`overlays.default`) adds it to the package set as
-# `buildMillProject`, so a package written for callPackage takes it like
-# any other builder:
+# mill-purifier overlay (`overlays.default`) adds the scope `mill-purifier`
+# to the package set, and the scope holds the builder, so a package written
+# for callPackage takes the scope by name:
 #
-#   { buildMillProject }: (buildMillProject { src = ./.; }).packages.core
+#   { mill-purifier }:
+#   (mill-purifier.buildMillProject { src = ./.; }).packages.core
 #
-# and `buildMillProject.override` replaces what it takes from the set. The
+# `mill-purifier.buildMillProject.override` replaces what the builder takes,
+# and `mill-purifier.overrideScope` replaces what the scope shares. The
 # builder returns
 #
 #   packages.<id>  the published artifacts of the Mill module <id> (its

@@ -16,21 +16,23 @@
       inherit (libOverlays) default;
     };
 
-    # The packages are the `default` entry of this flake's package overlay
-    # registry (pkg-overlays/): the package set applies it by default, and
-    # the flake exports it as `pkgOverlays` and as the plain
-    # `overlays.default`.
-    nixpkgs = {
-      packages.export.enabled = true;
-    };
+    # The package scope `mill-purifier` is the `default` entry of this
+    # flake's package overlay registry (pkg-overlays/): the package set
+    # applies it by default, and the flake exports it as `pkgOverlays` and
+    # as the plain `overlays.default`. The scope holds the builder, which is
+    # a function and not a package, so the flake exports its packages below
+    # by name and not as the whole scope.
   };
 
   # `nix run github:nix-purifiers/mill-purifier -- lock` locks the Mill
   # build in the current directory.
   perSystem =
-    { config, ... }:
+    { pkgs, ... }:
     {
-      packages.default = config.packages.cli;
+      packages = {
+        cli = pkgs.mill-purifier.cli;
+        default = pkgs.mill-purifier.cli;
+      };
     };
 
   partitionedAttrs.checks = "checks";

@@ -8,7 +8,8 @@
 #
 # It imports the purifier library (`lib.purifier`), whose fetchers, tree,
 # checkLock and entriesFor the builder uses. The builder is the package
-# `buildMillProject` that the default package overlay adds.
+# `buildMillProject` in the scope `pkgs.mill-purifier` that the default
+# package overlay adds.
 { ... }:
 {
 

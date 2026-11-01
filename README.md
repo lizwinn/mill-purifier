@@ -20,14 +20,15 @@ nix run github:nix-purifiers/mill-purifier -- lock
 The build must pin its Mill version, in the `//| mill-version:` header of
 `build.mill` or in `.mill-version`.
 
-Build it with Nix. The overlay of the flake, `overlays.default`, adds the
-builder `buildMillProject` to the package set, where nixpkgs keeps its own
-builders. A package takes it by name, like any other builder:
+Build it with Nix. The overlay of the flake, `overlays.default`, adds one
+attribute to the package set: the scope `mill-purifier`, which holds the
+builder `buildMillProject` beside the `mill-purifier` command. A package
+takes the scope by name:
 
 ```nix
 # package.nix
-{ buildMillProject }:
-(buildMillProject { src = ./.; }).packages.core
+{ mill-purifier }:
+(mill-purifier.buildMillProject { src = ./.; }).packages.core
 ```
 
 ```nix
@@ -42,14 +43,15 @@ builders. A package takes it by name, like any other builder:
     in
     {
       packages.${system}.core = pkgs.callPackage ./package.nix { };
-      checks.${system}.tests = (pkgs.buildMillProject { src = ./.; }).tests;
+      checks.${system}.tests = (pkgs.mill-purifier.buildMillProject { src = ./.; }).tests;
     };
 }
 ```
 
 `nix build '.#core'` builds the module `core`. The builder takes the
-packages it needs from the package set by name, such as `stdenvNoCC` and
-`jq`, and `buildMillProject.override` replaces any of them.
+packages it needs by name, such as `stdenvNoCC` and `jq`.
+`mill-purifier.buildMillProject.override` replaces any of them, and
+`mill-purifier.overrideScope` replaces what everything in the scope shares.
 
 ### What the builder takes and returns
 
@@ -368,7 +370,7 @@ version from five git queries, and `buildMillProject` answers them with a
 commit:
 
 ```nix
-pkgs.buildMillProject {
+pkgs.mill-purifier.buildMillProject {
   src = ./.;
   git = {
     inherit (self) rev revCount;
@@ -422,7 +424,7 @@ version:
     let
       system = "x86_64-linux";
       pkgs = nixpkgs.legacyPackages.${system}.extend mill-purifier.overlays.default;
-      build = pkgs.buildMillProject {
+      build = pkgs.mill-purifier.buildMillProject {
         src = fansi.outPath;
         lockFile = ./fansi.lock.json;
         # fansi takes its version from git: this is the commit of the tag.
