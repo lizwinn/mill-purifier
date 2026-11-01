@@ -20,8 +20,10 @@
     # flake's package overlay registry (pkg-overlays/): the package set
     # applies it by default, and the flake exports it as `pkgOverlays` and
     # as the plain `overlays.default`. The scope holds the builder, which is
-    # a function and not a package, so the flake exports its packages below
-    # by name and not as the whole scope.
+    # a function and not a package, so the flake sets `packages` below to
+    # the derivations of the scope and turns the export of the whole scope
+    # off.
+    nixpkgs.packages.export.enabled = false;
   };
 
   # `nix run github:nix-purifiers/mill-purifier -- lock` locks the Mill
@@ -29,8 +31,7 @@
   perSystem =
     { pkgs, ... }:
     {
-      packages = {
-        cli = pkgs.mill-purifier.cli;
+      packages = lib.filterAttrs (_: lib.isDerivation) pkgs.mill-purifier // {
         default = pkgs.mill-purifier.cli;
       };
     };
