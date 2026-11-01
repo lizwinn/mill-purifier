@@ -15,7 +15,7 @@
 # would in a directory that is not a repository.
 {
   lib,
-  pkgs,
+  writeShellScriptBin,
 }:
 git:
 let
@@ -29,7 +29,7 @@ let
     exit 128
   '';
 in
-pkgs.writeShellScriptBin "git" ''
+writeShellScriptBin "git" ''
   case "$*" in
     "rev-parse HEAD")
       echo ${q rev} ;;

@@ -8,12 +8,16 @@
 # `tests/relock-fixtures.sh` writes the lockfiles again.
 {
   pkgs,
+  # The flake's default package overlay, which adds buildMillProject.
+  overlay,
   millPurifier,
   cli,
 }:
 let
   inherit (pkgs) lib;
-  build = args: millPurifier.buildMillProject ({ inherit pkgs; } // args);
+  # Every build goes through buildMillProject of a package set that the
+  # overlay applies to, as the build of a consumer does.
+  build = (pkgs.extend overlay).buildMillProject;
 
   # The output of a Mill run must equal `expected`.
   prints =

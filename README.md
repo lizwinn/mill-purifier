@@ -20,8 +20,15 @@ nix run github:nix-purifiers/mill-purifier -- lock
 The build must pin its Mill version, in the `//| mill-version:` header of
 `build.mill` or in `.mill-version`.
 
-Build it with Nix. The flake publishes the builder in its library as
-`lib.mill-purifier.buildMillProject`:
+Build it with Nix. The overlay of the flake, `overlays.default`, adds the
+builder `buildMillProject` to the package set, where nixpkgs keeps its own
+builders. A package takes it by name, like any other builder:
+
+```nix
+# package.nix
+{ buildMillProject }:
+(buildMillProject { src = ./.; }).packages.core
+```
 
 ```nix
 {
@@ -31,24 +38,22 @@ Build it with Nix. The flake publishes the builder in its library as
   outputs = { nixpkgs, mill-purifier, ... }:
     let
       system = "x86_64-linux";
-      pkgs = nixpkgs.legacyPackages.${system};
-      build = mill-purifier.lib.mill-purifier.buildMillProject {
-        inherit pkgs;
-        src = ./.;
-      };
+      pkgs = nixpkgs.legacyPackages.${system}.extend mill-purifier.overlays.default;
     in
     {
-      packages.${system}.core = build.packages.core;
-      checks.${system}.tests = build.tests;
+      packages.${system}.core = pkgs.callPackage ./package.nix { };
+      checks.${system}.tests = (pkgs.buildMillProject { src = ./.; }).tests;
     };
 }
 ```
 
-`nix build '.#core'` builds the module `core`.
+`nix build '.#core'` builds the module `core`. The builder takes the
+packages it needs from the package set by name, such as `stdenvNoCC` and
+`jq`, and `buildMillProject.override` replaces any of them.
 
 ### What the builder takes and returns
 
-`buildMillProject` takes `pkgs` and `src`, and these arguments, which
+`buildMillProject` takes `src` and these arguments, which
 `nix/lib/build-mill-project.nix` documents:
 
 - `fetchers`: the fetchers of the purifier library, such as a `fetchurl`
@@ -108,7 +113,7 @@ It also sets `java.properties.date`, which replaces the date in the
 `.properties` files that `java.util.Properties` writes, such as those of
 Mill's BuildInfo plugin.
 
-## Everyday loop
+## Development loop
 
 Mill has no plugin mechanism that reaches every build, so the everyday
 loop goes through `mill-purifier mill`, which runs Mill's own launcher with
@@ -178,7 +183,7 @@ publisher in a plain Mill build, through its environment variables and
 arguments. Resolution runs online and starts from the locked downloads,
 because a publisher can need libraries that the lock run did not use.
 
-## Offline work
+## Working offline
 
 ```zsh
 mill-purifier prefetch
@@ -216,7 +221,7 @@ dependencies), so the server's own libraries and the source jars an editor
 shows are in the lock. The script names the mill-purifier package it was
 written by; run the install again after updating mill-purifier.
 
-## Errors and fixes
+## Troubleshooting
 
 | What happened | What the error says | What to run |
 |---|---|---|
@@ -232,7 +237,7 @@ The lockfile records the hash of its own content (`contentHash`), and Nix
 and the command both check it, so a hand edit fails before anything is
 fetched.
 
-## Sources supported and refused
+## Supported language repositories
 
 The lock run records what coursier, the dependency resolver of Mill,
 downloads, so it supports every source coursier resolves from:
@@ -253,7 +258,7 @@ downloads, so it supports every source coursier resolves from:
 - **Version listings** (`maven-metadata.xml`) for version ranges and
   `latest` selectors, as described below.
 
-It refuses, with the reason in the mechanism:
+These limits follow from how the lock is made:
 
 - **Mill 0.x**: Mill 1.x changed the build file format, the launcher and
   the way Mill resolves itself, and the lock run and the sandboxed build
@@ -357,8 +362,7 @@ version from five git queries, and `buildMillProject` answers them with a
 commit:
 
 ```nix
-buildMillProject {
-  inherit pkgs;
+pkgs.buildMillProject {
   src = ./.;
   git = {
     inherit (self) rev revCount;
@@ -409,9 +413,8 @@ version:
   outputs = { nixpkgs, mill-purifier, fansi, ... }:
     let
       system = "x86_64-linux";
-      pkgs = nixpkgs.legacyPackages.${system};
-      build = mill-purifier.lib.mill-purifier.buildMillProject {
-        inherit pkgs;
+      pkgs = nixpkgs.legacyPackages.${system}.extend mill-purifier.overlays.default;
+      build = pkgs.buildMillProject {
         src = fansi.outPath;
         lockFile = ./fansi.lock.json;
         # fansi takes its version from git: this is the commit of the tag.

@@ -1,14 +1,16 @@
 # buildMillProject: the sandboxed builds of a Mill build, from the lockfile
-# that `mill-purifier lock` writes at the build root. The flake publishes it
-# as `lib.mill-purifier.buildMillProject`:
+# that `mill-purifier lock` writes at the build root.
 #
-#   (mill-purifier.lib.mill-purifier.buildMillProject {
-#     inherit pkgs;
-#     src = ./.;
-#   }).packages.core
+# The file is a package for callPackage: the first argument set is what it
+# takes from the package set, and the result is the builder. The
+# mill-purifier overlay (`overlays.default`) adds it to the package set as
+# `buildMillProject`, so a package written for callPackage takes it like
+# any other builder:
 #
-# The first argument set is what the library holds (the purifier library);
-# the second is the build. The builder returns
+#   { buildMillProject }: (buildMillProject { src = ./.; }).packages.core
+#
+# and `buildMillProject.override` replaces what it takes from the set. The
+# builder returns
 #
 #   packages.<id>  the published artifacts of the Mill module <id> (its
 #                  module path, such as `core` or `foo.bar`), in Maven
@@ -31,10 +33,20 @@
 #                  unpacked and patched for Nix
 #   lock           the lock in memory, as readLock (read-lock.nix) gives it
 #   jdk            the JDK that runs Mill
-{ purifier }:
 {
-  # The package set the build runs in.
-  pkgs,
+  lib,
+  stdenvNoCC,
+  runCommand,
+  callPackage,
+  fetchurl,
+  jq,
+  strip-nondeterminism,
+  which,
+  # The purifier library (lib.purifier): fetchEntry, tree, checkLock and
+  # entriesFor.
+  purifier,
+}:
+{
   # The root of the Mill build.
   src,
   # The fetchers of the purifier library (fetchEntry and tree), such as a
@@ -63,18 +75,10 @@
   allowStaleLock ? false,
 }:
 let
-  inherit (pkgs)
-    lib
-    stdenvNoCC
-    runCommand
-    jq
-    strip-nondeterminism
-    ;
-
   # The lock in memory (read-lock.nix), which checkLock of the purifier
   # library stops at with its problems.
   lock = purifier.checkLock (import ./read-lock.nix { inherit src lockFile allowStaleLock; });
-  system = pkgs.stdenv.hostPlatform.system;
+  system = stdenvNoCC.hostPlatform.system;
 
   # Build outputs and editor state never take part in a build.
   defaultSrcFilter =
@@ -100,7 +104,7 @@ let
     filter = if srcFilter != null then srcFilter else defaultSrcFilter;
   };
 
-  jdk' = if jdk != null then jdk else import ./jdk.nix pkgs;
+  jdk' = if jdk != null then jdk else callPackage ./jdk.nix { };
 
   # The Mill version the build pins, and the launcher of it, which the lock
   # run downloaded from Maven Central to this place in the coursier cache.
@@ -117,8 +121,14 @@ let
     else
       lock.mill.archives.${system}
         or (throw "mill-purifier: ${toString lockFile} locks the JVMs of the build for ${lib.concatStringsSep " and " (builtins.attrNames lock.mill.archives)}, not for ${system}.");
+  # What fetchEntry and tree of the purifier library take: the tools of the
+  # package set that they use for the file entries of a lock, and the
+  # fetchers of the caller.
   fetcherArgs = {
-    inherit pkgs;
+    pkgs = {
+      inherit runCommand;
+    };
+    inherit fetchurl;
   }
   // fetchers;
 
@@ -129,12 +139,12 @@ let
       entries = map (e: removeAttrs e [ "systems" ]) systemEntries;
     }
   );
-  archiveCache = import ./archive-cache.nix {
-    inherit pkgs archives;
+  archiveCache = callPackage ./archive-cache.nix {
+    inherit archives;
     entries = systemEntries;
     fetchEntry = purifier.fetchEntry fetcherArgs;
   };
-  gitShim = if git == null then null else import ./git-shim.nix { inherit lib pkgs; } git;
+  gitShim = if git == null then null else callPackage ./git-shim.nix { } git;
 
   # The Mill invocation shared by every build from the lock;
   # `mill-purifier lock` runs Mill the same way, so a lock made from it holds
@@ -155,7 +165,7 @@ let
     # files Mill's BuildInfo plugin writes.
     export JAVA_OPTS="-Duser.home=$HOME -Djava.io.tmpdir=$TMPDIR/java-tmp -Djava.properties.date=1980-01-01T00:00:00Z"
     # The launcher of Mill 1.0 runs `which`.
-    export PATH="${pkgs.which}/bin:$PATH"
+    export PATH="${which}/bin:$PATH"
     ${lib.optionalString (gitShim != null) ''export PATH="${gitShim}/bin:$PATH"''}
     if [ ! -d "$COURSIER_CACHE" ]; then
       mkdir -p "$HOME" "$XDG_RUNTIME_DIR" "$TMPDIR/java-tmp" "$COURSIER_CACHE" "$COURSIER_ARCHIVE_CACHE"

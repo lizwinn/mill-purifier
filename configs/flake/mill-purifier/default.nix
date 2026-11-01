@@ -57,6 +57,8 @@
           {
             checks = import ../../../tests {
               inherit pkgs;
+              # The flake's default package overlay, which adds buildMillProject.
+              overlay = self.overlays.default;
               millPurifier = self.lib.mill-purifier;
               inherit (self.packages.${system}) cli;
             };

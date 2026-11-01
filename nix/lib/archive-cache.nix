@@ -7,19 +7,24 @@
 # a filesystem hierarchy standard (FHS) system. Coursier finds the
 # directory and does not unpack the archive again.
 #
-#   pkgs        the package set
 #   archives    the cache paths of the archives coursier unpacks on the
-#               system of `pkgs`
+#               system of the package set
 #   entries     the download entries of that system
 #   fetchEntry  the fetcher of the purifier library, bound to its fetchers
+#
+# The file is a package for callPackage.
 {
-  pkgs,
+  lib,
+  stdenv,
+  runCommand,
+  autoPatchelfHook,
+  unzip,
+  zlib,
   archives,
   entries,
   fetchEntry,
 }:
 let
-  inherit (pkgs) lib stdenv runCommand;
   byPath = builtins.listToAttrs (
     map (a: {
       name = a.path;
@@ -43,15 +48,15 @@ let
       # A JDK keeps its own debug information and must stay as shipped.
       dontStrip = true;
       nativeBuildInputs = [
-        pkgs.autoPatchelfHook
-        pkgs.unzip
+        autoPatchelfHook
+        unzip
       ];
       # What a headless JDK links against. The AWT, sound and font
       # libraries of a JDK link against X11, ALSA and fontconfig, which a
       # build never loads, so missing dependencies are not an error.
       buildInputs = [
         stdenv.cc.cc.lib
-        pkgs.zlib
+        zlib
       ];
       autoPatchelfIgnoreMissingDeps = [ "*" ];
       installPhase = ''
