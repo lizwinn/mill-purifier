@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-{ ... }:
+{ closure-lib, ... }:
 {
   config,
   inputs,
@@ -8,32 +8,32 @@
 }:
 {
 
-  imports = [ inputs.flake-parts.flakeModules.partitions ];
+  imports = [
+    inputs.flake-parts.flakeModules.partitions
+    closure-lib.caisson.modules.flake."purifier/purifier-packages"
+  ];
 
   debug = false;
   caisson = {
     libOverlays.exported = libOverlays: {
       inherit (libOverlays) default;
     };
-
-    # The package scope `mill-purifier` is the `default` entry of this
-    # flake's package overlay registry (pkg-overlays/): the package set
-    # applies it by default, and the flake exports it as `pkgOverlays` and
-    # as the plain `overlays.default`. The scope holds the builder, which is
-    # a function and not a package, so the flake sets `packages` below to
-    # the derivations of the scope and turns the export of the whole scope
-    # off.
-    nixpkgs.packages.export.enabled = false;
   };
+
+  # The package scope `mill-purifier` is the `default` entry of this flake's
+  # package overlay registry (pkg-overlays/): the package set applies it by
+  # default, and the flake exports it as `pkgOverlays` and as the plain
+  # `overlays.default`. The flake publishes the derivations of the scope as
+  # its packages, because the scope also holds the builder, which is a
+  # function.
+  purifier.scope = "mill-purifier";
 
   # `nix run github:nix-purifiers/mill-purifier -- lock` locks the Mill
   # build in the current directory.
   perSystem =
     { pkgs, ... }:
     {
-      packages = lib.filterAttrs (_: lib.isDerivation) pkgs.mill-purifier // {
-        default = pkgs.mill-purifier.cli;
-      };
+      packages.default = pkgs.mill-purifier.cli;
     };
 
   partitionedAttrs.checks = "checks";
