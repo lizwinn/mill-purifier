@@ -379,21 +379,18 @@ definition, so the lock would not be renewed, and the build would publish
 the version of an old tag. Without `git`, VcsVersion sees no repository
 and reports `no-vcs`, as it does for a source tree without git.
 
-## Real-world projects
+## Examples
 
-[fansi](https://github.com/com-lihaoyi/fansi) at the tag 0.5.1, commit
-`387754bc1fc0be0ac787b195490275012d80c683`, is locked in
-`tests/real-world/fansi.lock.json`. It pins Mill 1.0.0 and has JVM, Scala.js
-and Scala Native modules, each cross-built for Scala 2.12.20, 2.13.15 and
-3.3.6, the MiMa plugin in the meta-build, and a version from git. The lock
-run runs its JVM tests for Scala 2.13.15. The flake builds all nine
-packages and runs those tests in the sandbox, and a CI job locks the
+CI locks and builds [fansi](https://github.com/com-lihaoyi/fansi) at the
+tag 0.5.1, commit `387754bc1fc0be0ac787b195490275012d80c683`, as an example
+of the purifier at work on an existing project. Its lockfile is
+`tests/real-world/fansi.lock.json`. The project pins Mill 1.0.0 and has JVM,
+Scala.js and Scala Native modules, each cross-built for Scala 2.12.20,
+2.13.15 and 3.3.6, the MiMa plugin in the meta-build, and a version from
+git. The lock run runs its JVM tests for Scala 2.13.15. The flake builds all
+nine packages and runs those tests in the sandbox, and a CI job locks the
 project again and compares the lockfile. Mill 1.0.0 has no Maven publisher,
 so `release` is not available for it.
-
-[os-lib](https://github.com/com-lihaoyi/os-lib) is refused: its build
-downloads a source jar outside coursier. The reason is under
-[Sources supported and refused](#sources-supported-and-refused).
 
 The fixtures in `tests/fixtures` cover the source kinds above:
 `simple` (a Scala module with an munit suite, on the nixpkgs JDK) and
