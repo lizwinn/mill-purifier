@@ -198,7 +198,15 @@ let
     ${lib.optionalString (projectDependencies != [ ]) ''
       ${python3}/bin/python ${purifier.coursierInputsTool}/coursier_inputs.py \
         --cache "$COURSIER_CACHE" --repository ${provided.maven} \
-        --catalog ${provided.maven.catalog} --sources "$PWD" --lock ${lockFile}
+        --catalog ${provided.maven.catalog} --sources "$PWD" --bootstrap
+      java $JAVA_OPTS -jar "$COURSIER_CACHE/${launcher}" \
+        --no-daemon --ticker false show \
+        '{__.mvnDeps,__.runMvnDeps,__.compileMvnDeps,__.mandatoryMvnDeps}' \
+        </dev/null > "$TMPDIR/mill-project-dependencies.json"
+      ${python3}/bin/python ${purifier.coursierInputsTool}/coursier_inputs.py \
+        --cache "$COURSIER_CACHE" --repository ${provided.maven} \
+        --catalog ${provided.maven.catalog} --sources "$PWD" \
+        --evaluated "$TMPDIR/mill-project-dependencies.json"
     ''}
     java $JAVA_OPTS -jar "$COURSIER_CACHE/${launcher}" \
       --no-daemon --ticker false ${args} </dev/null || {

@@ -477,6 +477,25 @@ def resolve(work, env, jvm, launcher, selector):
     return [l.strip() for l in result.stdout.splitlines() if l.strip()]
 
 
+# These are declarations in project modules, not Mill's bootstrap classpath.
+# Evaluating them does not resolve the project dependencies or compile sources.
+PROJECT_DEPENDENCIES = "{__.mvnDeps,__.runMvnDeps,__.compileMvnDeps,__.mandatoryMvnDeps}"
+
+
+def stage_project_inputs(cache, views, work, env, jvm, launcher, lock_file=None):
+    import project_inputs
+    supplied = project_inputs.stage_coursier(cache, views, work, lock_file, evaluated=[])
+    shown = run_mill(work, env, jvm, launcher, ["show", PROJECT_DEPENDENCIES], capture=True)
+    if shown.returncode != 0:
+        raise Failure("Mill could not evaluate the project's native dependency declarations:\n" + shown.stderr)
+    try:
+        evaluated = json.loads(shown.stdout)
+    except ValueError as error:
+        raise Failure(f"Mill returned invalid dependency JSON: {error}") from None
+    supplied.update(project_inputs.stage_coursier(cache, views, work, lock_file, evaluated=evaluated))
+    return supplied
+
+
 def artifact_key(name, artifact_id, version):
     """A published file name without the version: core_3-0.1.0-sources.jar
     becomes core_3-sources.jar."""
@@ -497,10 +516,9 @@ def offline_check(root, state, kept, cache, launcher_path, views=()):
         target.parent.mkdir(parents=True, exist_ok=True)
         os.symlink(cache / rel, target)
     copy_build(root, check_work)
-    if views:
-        import project_inputs
-        project_inputs.stage_coursier(check_cache, views, check_work)
     env, jvm = mill_env(check_cache, state / "check-archive-cache", state / "lock-home", state / "lock-tmp", offline=True)
+    if views:
+        stage_project_inputs(check_cache, views, check_work, env, jvm, check_cache / launcher_path)
     ok = run_mill(check_work, env, jvm, check_cache / launcher_path, ["__.compile"], capture=True).returncode == 0
     log("an offline build without the version listings " + ("passed" if ok else "failed"))
     return ok
@@ -635,11 +653,9 @@ def lock(root, lock_file, tests=None, updated=None, input_refs=None):
     if inputs:
         import project_inputs
         views = project_inputs.maven_views(inputs, state / "project-inputs")
-        provided = project_inputs.stage_coursier(cache, views, work)
+        provided = stage_project_inputs(cache, views, work, env, jvm, launcher)
     publish_tasks = resolve(work, env, jvm, launcher, "__.publishArtifacts")
     test_tasks = [] if tests == "none" else resolve(work, env, jvm, launcher, tests)
-    if views:
-        provided.update(project_inputs.stage_coursier(cache, views, work))
     log("compiling every module with an empty coursier cache")
     if run_mill(work, env, jvm, launcher, ["__.compile"]).returncode != 0:
         raise Failure("the lock run failed in `__.compile`")
@@ -845,8 +861,11 @@ def caches(root, lock_file, current):
             stamp.write_text(built)
         result.append(cache_dir / name)
     if state.get("projectInputs"):
-        import project_inputs
-        project_inputs.stage_coursier(result[0], state["projectInputs"], root, lock_file)
+        temporary = root / "out" / "mill-purifier" / "tmp"
+        temporary.mkdir(parents=True, exist_ok=True)
+        env, jvm = mill_env(result[0], result[1], None, temporary, offline=True)
+        stage_project_inputs(result[0], state["projectInputs"], root, env, jvm,
+                             result[0] / launcher_cache_path(root), lock_file)
     return result
 
 
