@@ -171,7 +171,8 @@ let
   # `mill-purifier lock` runs Mill the same way, so a lock made from it holds
   # what this needs. It is one subshell, so a redirection after it takes the
   # output of Mill.
-  runMill = args: ''
+  runMill = runMillWithInputs true;
+  runMillWithInputs = stageInputs: args: ''
     (
     export HOME="$TMPDIR/home"
     export XDG_RUNTIME_DIR="$TMPDIR/run"
@@ -195,7 +196,7 @@ let
       cp -rs --no-preserve=mode ${dependencies}/. "$COURSIER_CACHE"
       cp -rs --no-preserve=mode ${archiveCache}/. "$COURSIER_ARCHIVE_CACHE"
     fi
-    ${lib.optionalString (projectDependencies != [ ]) ''
+    ${lib.optionalString (stageInputs && projectDependencies != [ ]) ''
       ${python3}/bin/python ${purifier.coursierInputsTool}/coursier_inputs.py \
         --cache "$COURSIER_CACHE" --repository ${provided.maven} \
         --catalog ${provided.maven.catalog} --sources "$PWD" --bootstrap
@@ -245,6 +246,17 @@ let
             ]
           )
         } > "$TMPDIR/publish.json"
+        ${lib.optionalString (projectDependencies != [ ]) ''
+          ${
+            runMill (
+              lib.escapeShellArgs [
+                "show"
+                "${project.id}.resolvedRunMvnDeps"
+              ]
+            )
+          } \
+            > "$TMPDIR/runtime-classpath.json"
+        ''}
         runHook postBuild
       '';
       installPhase = ''
@@ -264,6 +276,9 @@ let
             ln -s "../../$dir/$name" "$out/${linkDirectory}/$id$rest"
           done
         ${lib.optionalString (projectDependencies != [ ]) ''
+          ${python3}/bin/python ${purifier.projectInputsTool}/coursier_runtime.py \
+            --cache "$TMPDIR/coursier-cache" --classpath "$TMPDIR/runtime-classpath.json" \
+            --catalog ${provided.maven.catalog} --destination "$out/nix-support/runtime"
           for pom in "$out/$dir"/*.pom; do
             ${python3}/bin/python ${purifier.jvmRepositoryTool} \
               --rewrite-pom "$pom" --catalog ${provided.maven.catalog}
@@ -292,6 +307,8 @@ let
         millProject = project;
         projections = purifier.jvmProjections {
           repository = finalAttrs.finalPackage;
+          runtimeRepository =
+            if projectDependencies == [ ] then null else "${finalAttrs.finalPackage}/nix-support/runtime";
           dependencies = projectDependencies;
           inherit runCommand python3;
           name = "mill-jvm-publications";
@@ -379,7 +396,7 @@ let
       chmod -R u+w .
       export MILL_MAVEN_USERNAME=mill-purifier
       export MILL_MAVEN_PASSWORD="$MILL_MAVEN_USERNAME"
-      ${runMill ''
+      ${runMillWithInputs false ''
         mill.javalib.MavenPublishModule/publishAll \
           --publishArtifacts __.publishArtifacts \
           --releaseUri "file://$out" --snapshotUri "file://$out"''}
