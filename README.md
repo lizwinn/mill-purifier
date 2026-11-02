@@ -140,10 +140,13 @@ builder directly:
   inputs.mill-purifier.url = "github:nix-purifiers/mill-purifier";
   inputs.nixpkgs.follows = "mill-purifier/nixpkgs";
 
-  outputs = { nixpkgs, mill-purifier, ... }:
+  outputs =
+    { nixpkgs, mill-purifier, ... }:
     let
       system = "x86_64-linux";
-      pkgs = nixpkgs.legacyPackages.${system}.extend mill-purifier.overlays.default;
+      pkgs =
+        nixpkgs.legacyPackages.${system}.extend
+          mill-purifier.overlays.default;
       build = pkgs.mill-purifier.buildMillProject { src = ./.; };
     in
     {
@@ -230,15 +233,15 @@ For an ad hoc build, the builder can also be evaluated directly from the
 project root. Replace the example package name with one from your project:
 
 ```zsh
-nix build --impure --expr '
-  let
-    purifier = builtins.getFlake "github:nix-purifiers/mill-purifier";
-    pkgs = import purifier.inputs.nixpkgs {
-      system = builtins.currentSystem;
-      overlays = [ purifier.overlays.default ];
-    };
-  in
-  (pkgs.mill-purifier.buildMillProject { src = ./.; }).packages.core'
+nix build --impure --expr 'let
+  purifier = builtins.getFlake "github:nix-purifiers/mill-purifier";
+  pkgs = import purifier.inputs.nixpkgs {
+    system = builtins.currentSystem;
+    overlays = [ purifier.overlays.default ];
+  };
+in
+(pkgs.mill-purifier.buildMillProject { src = ./.; })
+.packages.core'
 ```
 
 This uses the purifier's pinned nixpkgs, matching the lock command above.
@@ -463,24 +466,24 @@ and Scala Native, cross-built for three Scala versions. To build version
 ```zsh
 git clone --branch 0.5.1 https://github.com/com-lihaoyi/fansi
 cd fansi
-nix run github:nix-purifiers/mill-purifier -- lock --tests 'fansi.jvm[2.13.15].test.testForked'
-nix build --impure --expr '
-  let
-    purifier = builtins.getFlake "github:nix-purifiers/mill-purifier";
-    pkgs = import purifier.inputs.nixpkgs {
-      system = builtins.currentSystem;
-      overlays = [ purifier.overlays.default ];
-    };
-    checkout = builtins.fetchGit ./.;
-  in
-  (pkgs.mill-purifier.buildMillProject {
-    src = ./.;
-    git = {
-      inherit (checkout) rev revCount;
-      tag = "0.5.1";
-      commitsSinceTag = 0;
-    };
-  }).packages."fansi.jvm[2.13.15]"'
+nix run github:nix-purifiers/mill-purifier -- lock --tests \
+  'fansi.jvm[2.13.15].test.testForked'
+nix build --impure --expr 'let
+  purifier = builtins.getFlake "github:nix-purifiers/mill-purifier";
+  pkgs = import purifier.inputs.nixpkgs {
+    system = builtins.currentSystem;
+    overlays = [ purifier.overlays.default ];
+  };
+  checkout = builtins.fetchGit ./.;
+in
+(pkgs.mill-purifier.buildMillProject {
+  src = ./.;
+  git = {
+    inherit (checkout) rev revCount;
+    tag = "0.5.1";
+    commitsSinceTag = 0;
+  };
+}).packages."fansi.jvm[2.13.15]"'
 ```
 
 `--tests` names the tests that the lock run runs, so that their
