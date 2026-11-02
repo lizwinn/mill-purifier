@@ -496,7 +496,5 @@ needs a project on Mill 1.1.0 or later.
 
 ## Credits
 
-The design follows [sbt-nix-backend](https://github.com/clhodapp/sbt-nix-backend),
-which does the same for sbt. The coursier cache code (`pkgs/cli/coursier_cache.py`)
-is shared with the scala-cli purifier, and the download entries and their
-trees come from the [purifier library](https://github.com/nix-purifiers/purifier).
+The purifier idea was inspired by nixcloud's
+[cargo (libnix)](https://github.com/nixcloud/cargo).
