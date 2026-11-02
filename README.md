@@ -126,7 +126,8 @@ builder directly:
 
 ```nix
 {
-  inputs.mill-purifier.url = "github:nix-purifiers/mill-purifier";
+  inputs.mill-purifier.url =
+    "github:nix-purifiers/mill-purifier";
   inputs.nixpkgs.follows = "mill-purifier/nixpkgs";
 
   outputs =
@@ -136,7 +137,9 @@ builder directly:
       pkgs =
         nixpkgs.legacyPackages.${system}.extend
           mill-purifier.overlays.default;
-      build = pkgs.mill-purifier.buildMillProject { src = ./.; };
+      build = pkgs.mill-purifier.buildMillProject {
+        src = ./.;
+      };
     in
     {
       packages.${system}.core = build.packages.core;
