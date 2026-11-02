@@ -96,3 +96,27 @@ with tempfile.TemporaryDirectory(prefix="purifier-native-composition-") as tempo
                         +(downstream / 'classpath').read_text().strip(), 'Downstream'],
                        cwd=downstream, env=plain, check=True)
         print('MILL NATIVE AND PURE '+case.upper()+' ROUNDTRIP PASSED', flush=True)
+
+    reference = 'path:' + snapshot + '#checks.' + system + '.polyglot-hello-package.projections.maven'
+    repository = Path(subprocess.check_output(['nix', 'build', reference, '--print-out-paths',
+        '--out-link', str(temporary / 'polyglot-repository')], text=True).strip().splitlines()[-1])
+    pom = next((repository / 'example/hello').glob('*/*.pom'))
+    downstream = temporary / 'polyglot-downstream'
+    source = downstream / 'src/main/java/Downstream.java'
+    source.parent.mkdir(parents=True)
+    source.write_text('public final class Downstream {\n      public static void main(String[] args) throws Exception {\n        Class.forName("example.HelloKt").getMethod("main", String[].class)\n          .invoke(null, (Object)new String[0]);\n        for (String name : new String[]{"example.Greeter", "kotlin.Unit"}) {\n          String origin = Class.forName(name).getProtectionDomain().getCodeSource().getLocation().toString();\n          if (!origin.contains("-nix-")) throw new AssertionError(origin);\n        }\n      }\n    }')
+    (downstream / 'pom.xml').write_text(f"""<project><modelVersion>4.0.0</modelVersion>
+      <groupId>example</groupId><artifactId>downstream</artifactId><version>1</version>
+      <properties><maven.compiler.release>21</maven.compiler.release></properties>
+      <repositories><repository><id>projected</id><url>{repository.as_uri()}</url></repository></repositories>
+      <dependencies><dependency><groupId>example</groupId><artifactId>hello</artifactId>
+      <version>{pom.parent.name}</version></dependency></dependencies></project>""")
+    plain = dict(os.environ, JAVA_HOME=str(tools / 'jdk'))
+    subprocess.run([str(tools / 'bin/mvn'), '-B', '-Dmaven.repo.local='+str(temporary / 'ordinary-m2'),
+        'package', 'dependency:build-classpath', '-Dmdep.outputFile=classpath'],
+        cwd=downstream, env=plain, check=True)
+    output = subprocess.check_output([str(tools / 'jdk/bin/java'), '-cp',
+        str(downstream / 'target/classes')+os.pathsep+(downstream / 'classpath').read_text().strip(),
+        'Downstream'], cwd=downstream, env=plain, text=True)
+    assert 'hello java, kotlin' in output, output
+    print('MILL POLYGLOT ORDINARY MAVEN ROUNDTRIP PASSED', flush=True)

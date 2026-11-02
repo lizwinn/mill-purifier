@@ -8,7 +8,8 @@ repository, catalog, output = map(Path, sys.argv[1:4])
 version = sys.argv[4]
 lines = [f'//| mill-version: {version}', '//| mill-jvm-version: system', 'package build',
          'import mill.*, mill.javalib.*, mill.javalib.publish.*']
-for index, module in enumerate(json.loads(catalog.read_text())['modules']):
+description = json.loads(catalog.read_text())
+for index, module in enumerate(description.get('publications', description['modules'])):
     group, name, revision = (module[key] for key in ('group', 'name', 'version'))
     directory = repository / group.replace('.', '/') / name / revision
     payload = []

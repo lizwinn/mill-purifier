@@ -124,7 +124,9 @@ rewrite table is needed. Repeat `--input` for additional producers.
 
 The lock records the producer's pinned Nix source, rather than listing its
 artifacts as downloads. Relocking retains that pin; `update` refreshes it.
-Conflicting providers of the same module are rejected.
+Conflicting providers of the same module are rejected. For a multi-module
+producer, select its individual package when modules use different versions
+of the same dependency; each package exports its own runtime closure.
 
 For a Nix build definition, the corresponding builder argument is
 `projectDependencies = [ producer.packages.${system}.library ];`. By default,

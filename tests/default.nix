@@ -144,6 +144,11 @@ let
   };
 in
 {
+  # A producer needs a complete runtime view even with no Nix project inputs.
+  standalone-projection = pkgs.runCommand "mill-standalone-projection" { } ''
+    test -n "$(find ${core.projections.maven}/org/scala-lang/scala3-library_3 -name '*.jar')"
+    touch $out
+  '';
   composition = import ./composition.nix {
     inherit pkgs build;
     purifier = (pkgs.extend overlay).lib.purifier;
@@ -373,10 +378,21 @@ in
     import json, os
     from pathlib import Path
     modules = json.loads(Path(os.environ['CATALOG']).read_text())['modules']
-    assert {module['name'] for module in modules} == {'greeter', 'hello', 'versioned_3'}
+    own = {'greeter', 'hello', 'versioned_3'}
+    assert own <= {module['name'] for module in modules}
+    import xml.etree.ElementTree as ET
+    hello = next(module for module in modules if module['name'] == 'hello')
+    pom = Path(os.environ['REPOSITORY']) / 'example/hello' / hello['version'] / ('hello-'+hello['version']+'.pom')
+    model = ET.parse(pom).getroot()
+    greeter = next(dep for dep in model.findall('.//{*}dependencies/{*}dependency')
+                   if dep.findtext('{*}artifactId') == 'greeter')
+    selected = greeter.findtext('{*}version').strip('[]')
+    assert '-nix-' in selected
+    assert (Path(os.environ['REPOSITORY'])/'example/greeter'/selected/('greeter-'+selected+'.jar')).is_file()
     for module in modules:
         directory = Path(module['group'].replace('.', '/')) / module['name'] / module['version']
-        assert '-nix-' in module['version']
+        if module['name'] in own:
+            assert '-nix-' in module['version']
         for source in (Path(os.environ['REPOSITORY']) / directory).iterdir():
             if source.suffix in {'.jar', '.pom'}:
                 assert (Path(os.environ['RELEASE']) / directory / source.name).read_bytes() == source.read_bytes()

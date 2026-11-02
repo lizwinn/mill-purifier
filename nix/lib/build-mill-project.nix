@@ -224,109 +224,118 @@ let
 
   mkPackage =
     project:
-    stdenvNoCC.mkDerivation (finalAttrs: {
-      inherit (project) name;
-      src = filteredSrc;
-      nativeBuildInputs = [
-        jdk'
-        jq
-        strip-nondeterminism
-      ];
-      dontConfigure = true;
-      # The outputs are jars and POMs; fixup has nothing to patch, and it
-      # must not rewrite them.
-      dontFixup = true;
-      buildPhase = ''
-        runHook preBuild
-        ${
-          runMill (
-            lib.escapeShellArgs [
-              "show"
-              "${project.id}.publishArtifacts"
-            ]
-          )
-        } > "$TMPDIR/publish.json"
-        ${lib.optionalString (projectDependencies != [ ]) ''
+    let
+      publicationSource = runCommand "${project.name}-publication-source" { } ''
+        ${python3}/bin/python ${./publication-views.py} ${purifier.projectInputsTool} \
+          scope "$out" ${nativePublications} ${package}/nix-support/publish.json
+      '';
+      package = stdenvNoCC.mkDerivation (finalAttrs: {
+        inherit (project) name;
+        src = filteredSrc;
+        nativeBuildInputs = [
+          jdk'
+          jq
+          strip-nondeterminism
+        ];
+        dontConfigure = true;
+        # The outputs are jars and POMs; fixup has nothing to patch, and it
+        # must not rewrite them.
+        dontFixup = true;
+        buildPhase = ''
+          runHook preBuild
           ${
             runMill (
               lib.escapeShellArgs [
                 "show"
-                "${project.id}.resolvedRunMvnDeps"
+                "${project.id}.publishArtifacts"
               ]
             )
-          } \
-            > "$TMPDIR/runtime-classpath.json"
-        ''}
-        runHook postBuild
-      '';
-      installPhase = ''
-        runHook preInstall
-        group=$(jq -r .meta.group "$TMPDIR/publish.json")
-        id=$(jq -r .meta.id "$TMPDIR/publish.json")
-        version=$(jq -r .meta.version "$TMPDIR/publish.json")
-        dir="''${group//.//}/$id/$version"
-        mkdir -p "$out/$dir" "$out/${linkDirectory}"
-        # Each payload entry is [path reference, published file name]; a
-        # path reference is `ref:<version>:<signature>:<path>` (or `qref:`).
-        jq -r '.payload[] | [(.[0] | sub("^q?ref:[^:]*:[^:]*:"; "")), .[1]] | @tsv' \
-          "$TMPDIR/publish.json" |
-          while IFS=$'\t' read -r file name; do
-            cp "$file" "$out/$dir/$name"
-            rest=''${name#"$id-$version"}
-            ln -s "../../$dir/$name" "$out/${linkDirectory}/$id$rest"
-          done
-        ${lib.optionalString (projectDependencies != [ ]) ''
+          } > "$TMPDIR/publish.json"
+                    ${
+                      runMill (
+                        lib.escapeShellArgs [
+                          "show"
+                          "${project.id}.resolvedRunMvnDeps"
+                        ]
+                      )
+                    } \
+              > "$TMPDIR/runtime-classpath.json"
+          runHook postBuild
+        '';
+        installPhase = ''
+          runHook preInstall
+          group=$(jq -r .meta.group "$TMPDIR/publish.json")
+          id=$(jq -r .meta.id "$TMPDIR/publish.json")
+          version=$(jq -r .meta.version "$TMPDIR/publish.json")
+          dir="''${group//.//}/$id/$version"
+          mkdir -p "$out/$dir" "$out/${linkDirectory}"
+          # Each payload entry is [path reference, published file name]; a
+          # path reference is `ref:<version>:<signature>:<path>` (or `qref:`).
+          jq -r '.payload[] | [(.[0] | sub("^q?ref:[^:]*:[^:]*:"; "")), .[1]] | @tsv' \
+            "$TMPDIR/publish.json" |
+            while IFS=$'\t' read -r file name; do
+              cp "$file" "$out/$dir/$name"
+              rest=''${name#"$id-$version"}
+              ln -s "../../$dir/$name" "$out/${linkDirectory}/$id$rest"
+            done
           ${python3}/bin/python ${purifier.projectInputsTool}/coursier_runtime.py \
             --cache "$TMPDIR/coursier-cache" --classpath "$TMPDIR/runtime-classpath.json" \
             --catalog ${provided.maven.catalog} --destination "$out/nix-support/runtime"
-          for pom in "$out/$dir"/*.pom; do
-            ${python3}/bin/python ${purifier.jvmRepositoryTool} \
-              --rewrite-pom "$pom" --catalog ${provided.maven.catalog}
+          ${lib.optionalString (projectDependencies != [ ]) ''
+            for pom in "$out/$dir"/*.pom; do
+              ${python3}/bin/python ${purifier.jvmRepositoryTool} \
+                --rewrite-pom "$pom" --catalog ${provided.maven.catalog}
+            done
+          ''}
+          # Mill writes the time of the build into its jars (zip entry times,
+          # and the dates javadoc writes into its pages); the package sets them
+          # to SOURCE_DATE_EPOCH, so a build of the same source gives the same
+          # files.
+          find "$out/$dir" -name '*.jar' -exec strip-nondeterminism --type jar {} +
+          for key in ${lib.escapeShellArgs (map (a: a.key) project.artifacts)}; do
+            if [ ! -e "$out/${linkDirectory}/$key" ]; then
+              echo "mill-purifier: the lock names $key, which this build of ${project.id} did not publish; run mill-purifier lock" >&2
+              exit 1
+            fi
           done
-        ''}
-        # Mill writes the time of the build into its jars (zip entry times,
-        # and the dates javadoc writes into its pages); the package sets them
-        # to SOURCE_DATE_EPOCH, so a build of the same source gives the same
-        # files.
-        find "$out/$dir" -name '*.jar' -exec strip-nondeterminism --type jar {} +
-        for key in ${lib.escapeShellArgs (map (a: a.key) project.artifacts)}; do
-          if [ ! -e "$out/${linkDirectory}/$key" ]; then
-            echo "mill-purifier: the lock names $key, which this build of ${project.id} did not publish; run mill-purifier lock" >&2
-            exit 1
-          fi
-        done
-        # What publishBuild publishes: the coordinates and the files, by the
-        # names they are published under.
-        jq --arg dir "$out/$dir" \
-          '{group: .meta.group, id: .meta.id, version: .meta.version,
-            files: [.payload[] | {name: .[1], path: ($dir + "/" + .[1])}]}' \
-          "$TMPDIR/publish.json" > "$out/nix-support/publish.json"
-        runHook postInstall
-      '';
-      passthru = {
-        millProject = project;
-        projections = purifier.jvmProjections {
-          repository = finalAttrs.finalPackage;
-          runtimeRepository =
-            if projectDependencies == [ ] then null else "${finalAttrs.finalPackage}/nix-support/runtime";
-          dependencies = projectDependencies;
-          inherit runCommand python3;
-          name = "mill-jvm-publications";
+          # What publishBuild publishes: the coordinates and the files, by the
+          # names they are published under.
+          jq --arg dir "$out/$dir" \
+            '{group: .meta.group, id: .meta.id, version: .meta.version,
+              files: [.payload[] | {name: .[1], path: ($dir + "/" + .[1])}]}' \
+            "$TMPDIR/publish.json" > "$out/nix-support/publish.json"
+          runHook postInstall
+        '';
+        passthru = {
+          millProject = project;
+          projections = purifier.jvmProjections {
+            repository = publicationSource;
+            producer = nativePublications;
+            runtimeRepository = "${finalAttrs.finalPackage}/nix-support/runtime";
+            dependencies = projectDependencies;
+            inherit runCommand python3;
+            name = "mill-jvm-publications";
+          };
+          # The artifact files of the package by key, such as
+          # artifacts."core_3-sources.jar". They are known from the lock
+          # alone, before the package is built.
+          artifacts = builtins.listToAttrs (
+            map (a: {
+              name = a.key;
+              value = artifactFile finalAttrs.finalPackage a.key;
+            }) project.artifacts
+          );
         };
-        # The artifact files of the package by key, such as
-        # artifacts."core_3-sources.jar". They are known from the lock
-        # alone, before the package is built.
-        artifacts = builtins.listToAttrs (
-          map (a: {
-            name = a.key;
-            value = artifactFile finalAttrs.finalPackage a.key;
-          }) project.artifacts
-        );
-      };
-      meta.description = "${project.name}, built by mill-purifier";
-    });
+        meta.description = "${project.name}, built by mill-purifier";
+      });
+    in
+    package;
 
   packages = builtins.mapAttrs (_: mkPackage) lock.mill.projectsById;
+  nativePublications = runCommand "mill-native-publications" { } ''
+    ${python3}/bin/python ${./publication-views.py} ${purifier.projectInputsTool} \
+      native "$out" ${lib.escapeShellArgs (map toString (builtins.attrValues packages))}
+  '';
 
   runTask =
     name: args:
@@ -359,12 +368,28 @@ let
   # publish as `--publishArtifacts`, so `__.publishArtifacts` publishes what
   # Nix built. Its modules are named m0, m1, … in the order of the lock;
   # each has a comment naming the module it publishes.
-  rootProjections = purifier.jvmProjections {
-    repository = null;
-    dependencies = builtins.attrValues packages;
-    inherit runCommand python3;
-    name = "mill-publication-closure";
-  };
+  publicationClosure =
+    runCommand "mill-publication-closure"
+      {
+        outputs = [
+          "out"
+          "metadata"
+        ];
+        producerIdentity = (purifier.inputIdentity nativePublications).hash;
+        passthru.catalog = "${publicationClosure.metadata}/catalog.json";
+      }
+      ''
+        ${python3}/bin/python ${./publication-views.py} ${purifier.projectInputsTool} \
+          merge "$out" "$metadata" ${
+            lib.escapeShellArgs (
+              lib.concatMap (package: [
+                (toString package.projections.maven)
+                package.projections.maven.catalog
+              ]) (builtins.attrValues packages)
+            )
+          }
+      '';
+  rootProjections.maven = publicationClosure;
   publishBuild =
     runCommand "mill-publish-build"
       {
