@@ -453,9 +453,10 @@ and Scala Native, cross-built for three Scala versions. To build version
 2.13.15 from the same directory:
 
 ```zsh
+nix shell 'github:nix-purifiers/mill-purifier'
 git clone --branch 0.5.1 https://github.com/com-lihaoyi/fansi
 cd fansi
-nix run github:nix-purifiers/mill-purifier -- lock --tests \
+mill-purifier lock --tests \
   'fansi.jvm[2.13.15].test.testForked'
 nix build --impure --expr 'let
   purifier = builtins.getFlake "github:nix-purifiers/mill-purifier";
