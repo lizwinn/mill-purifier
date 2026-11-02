@@ -7,37 +7,45 @@
 let
   baseline = build { src = ./fixtures/simple; };
   fetch =
-    suffix:
+    module: suffix:
     purifier.fetchEntry { inherit pkgs; } (
       builtins.head (
         builtins.filter (
           entry:
-          entry.path == "https/repo1.maven.org/maven2/com/lihaoyi/upickle_3/4.1.0/upickle_3-4.1.0${suffix}"
+          entry.path
+          == "https/repo1.maven.org/maven2/com/lihaoyi/${module}_3/4.1.0/${module}_3-4.1.0${suffix}"
         ) baseline.fetches
       )
     );
-  provider =
-    pkgs.runCommand "mill-upickle-provider"
-      {
-        nativeBuildInputs = [ pkgs.python3 ];
-        passthru.projections = purifier.jvmProjections {
-          repository = provider;
-          inherit (pkgs) runCommand python3;
-        };
-      }
-      ''
-        directory=$out/com/lihaoyi/upickle_3/0.0.1
-        mkdir -p "$directory"
-        cp ${fetch ".jar"} "$directory/upickle_3-0.0.1.jar"
-        cp ${fetch "-sources.jar"} "$directory/upickle_3-0.0.1-sources.jar"
-        export ORIGINAL=${fetch ".pom"} TARGET="$directory/upickle_3-0.0.1.pom"
-        python - <<'PY'
-        import os, xml.etree.ElementTree as ET
-        root = ET.parse(os.environ['ORIGINAL']).getroot()
-        root.find('{*}version').text = '0.0.1'
-        ET.ElementTree(root).write(os.environ['TARGET'], encoding='utf-8', xml_declaration=True)
-        PY
-      '';
+  makeProvider =
+    module:
+    let
+      result =
+        pkgs.runCommand "mill-${module}-provider"
+          {
+            nativeBuildInputs = [ pkgs.python3 ];
+            passthru.projections = purifier.jvmProjections {
+              repository = result;
+              inherit (pkgs) runCommand python3;
+            };
+          }
+          ''
+            directory=$out/com/lihaoyi/${module}_3/0.0.1
+            mkdir -p "$directory"
+            cp ${fetch module ".jar"} "$directory/${module}_3-0.0.1.jar"
+            cp ${fetch module "-sources.jar"} "$directory/${module}_3-0.0.1-sources.jar"
+            export ORIGINAL=${fetch module ".pom"} TARGET="$directory/${module}_3-0.0.1.pom"
+            python - <<'PY'
+            import os, xml.etree.ElementTree as ET
+            root = ET.parse(os.environ['ORIGINAL']).getroot()
+            root.find('{*}version').text = '0.0.1'
+            ET.ElementTree(root).write(os.environ['TARGET'], encoding='utf-8', xml_declaration=True)
+            PY
+          '';
+    in
+    result;
+  provider = makeProvider "upickle";
+  coreProvider = makeProvider "upickle-core";
   original = builtins.fromJSON (builtins.readFile ./fixtures/simple/mill-purifier.lock.json);
   withoutProvided = removeAttrs (
     original
@@ -64,7 +72,7 @@ in
 pkgs.runCommand "mill-nix-composition"
   {
     nativeBuildInputs = [ pkgs.python3 ];
-    passthru = { inherit provider consumer; };
+    passthru = { inherit provider coreProvider consumer; };
   }
   ''
     test -f ${consumer.tests}

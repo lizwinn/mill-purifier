@@ -482,7 +482,7 @@ def resolve(work, env, jvm, launcher, selector):
 PROJECT_DEPENDENCIES = "{__.mvnDeps,__.runMvnDeps,__.compileMvnDeps,__.mandatoryMvnDeps}"
 
 
-def stage_project_inputs(cache, views, work, env, jvm, launcher, lock_file=None):
+def stage_project_inputs(cache, views, work, env, jvm, launcher, lock_file=None, resolve_metadata=False):
     import project_inputs
     supplied = project_inputs.stage_coursier(cache, views, work, lock_file, evaluated=[])
     shown = run_mill(work, env, jvm, launcher, ["show", PROJECT_DEPENDENCIES], capture=True)
@@ -493,6 +493,22 @@ def stage_project_inputs(cache, views, work, env, jvm, launcher, lock_file=None)
     except ValueError as error:
         raise Failure(f"Mill returned invalid dependency JSON: {error}") from None
     supplied.update(project_inputs.stage_coursier(cache, views, work, lock_file, evaluated=evaluated))
+    if resolve_metadata:
+        # Mill discovers constraints in dependency POMs during resolution. A
+        # first lock has none cached yet. Restage after that native discovery,
+        # including when an unavailable supplied version made resolution fail.
+        # Retry only while new exact supplied paths make progress.
+        while True:
+            resolved = run_mill(work, env, jvm, launcher,
+                ["show", "{__.resolvedMvnDeps,__.resolvedRunMvnDeps}"], capture=True)
+            aliases = project_inputs.stage_coursier(cache, views, work, lock_file, evaluated=evaluated)
+            added = aliases - supplied
+            supplied.update(aliases)
+            if added:
+                continue
+            if resolved.returncode != 0:
+                raise Failure("Mill could not resolve project dependencies after selecting Nix inputs:\n" + resolved.stderr)
+            break
     return supplied
 
 
@@ -653,7 +669,7 @@ def lock(root, lock_file, tests=None, updated=None, input_refs=None):
     if inputs:
         import project_inputs
         views = project_inputs.maven_views(inputs, state / "project-inputs")
-        provided = stage_project_inputs(cache, views, work, env, jvm, launcher)
+        provided = stage_project_inputs(cache, views, work, env, jvm, launcher, resolve_metadata=True)
     publish_tasks = resolve(work, env, jvm, launcher, "__.publishArtifacts")
     test_tasks = [] if tests == "none" else resolve(work, env, jvm, launcher, tests)
     log("compiling every module with an empty coursier cache")
