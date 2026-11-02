@@ -54,6 +54,7 @@ stdenvNoCC.mkDerivation {
     cp -r ${../../nix/lib} $out/libexec/mill-purifier/nix
     makeWrapper ${python3.interpreter} $out/bin/mill-purifier \
       --add-flags "$out/libexec/mill-purifier/mill_purifier.py" \
+      --prefix PYTHONPATH : ${purifierSource}/tools \
       --set MILL_PURIFIER_MILL ${lib.getExe mill} \
       --set MILL_PURIFIER_JDK ${jdk.home} \
       --set MILL_PURIFIER_LIB "$out/libexec/mill-purifier/nix" \

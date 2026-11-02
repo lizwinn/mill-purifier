@@ -486,7 +486,7 @@ def artifact_key(name, artifact_id, version):
     return artifact_id + name[len(prefix) :]
 
 
-def offline_check(root, state, kept, cache, launcher_path):
+def offline_check(root, state, kept, cache, launcher_path, views=()):
     """Whether the build compiles offline from only the `kept` downloads."""
     check_cache = state / "check-cache"
     check_work = state / "check-run"
@@ -497,6 +497,9 @@ def offline_check(root, state, kept, cache, launcher_path):
         target.parent.mkdir(parents=True, exist_ok=True)
         os.symlink(cache / rel, target)
     copy_build(root, check_work)
+    if views:
+        import project_inputs
+        project_inputs.stage_coursier(check_cache, views, check_work)
     env, jvm = mill_env(check_cache, state / "check-archive-cache", state / "lock-home", state / "lock-tmp", offline=True)
     ok = run_mill(check_work, env, jvm, check_cache / launcher_path, ["__.compile"], capture=True).returncode == 0
     log("an offline build without the version listings " + ("passed" if ok else "failed"))
@@ -573,7 +576,7 @@ def seed_listings(cache, current, updated):
             (target.parent / f".{name}.checked").write_bytes(b"")
 
 
-def lock(root, lock_file, tests=None, updated=None):
+def lock(root, lock_file, tests=None, updated=None, input_refs=None):
     """Writes the lockfile. `tests` is the Mill selector of the test tasks
     the lock run runs, or "none"; without it, the lock run uses the
     selector of the existing lockfile, or every test task. `updated` is
@@ -588,6 +591,14 @@ def lock(root, lock_file, tests=None, updated=None):
         current = {}
     if tests is None:
         tests = current.get("testSelector", DEFAULT_TESTS) if isinstance(current, dict) else DEFAULT_TESTS
+
+    previous_inputs = current.get("projectInputs", [])
+    if input_refs is None:
+        input_refs = [entry["reference"] for entry in previous_inputs]
+    inputs = []
+    if input_refs:
+        import project_inputs
+        inputs = project_inputs.pin(input_refs, previous_inputs, refresh=updated == [])
 
     version = mill_config(root, "mill-version")
     if not version:
@@ -620,8 +631,15 @@ def lock(root, lock_file, tests=None, updated=None):
     env, jvm = mill_env(cache, state / "lock-archive-cache", state / "lock-home", state / "lock-tmp", offline=False)
     env = mirror_env(env, state)
 
+    views, provided = [], set()
+    if inputs:
+        import project_inputs
+        views = project_inputs.maven_views(inputs, state / "project-inputs")
+        provided = project_inputs.stage_coursier(cache, views, work)
     publish_tasks = resolve(work, env, jvm, launcher, "__.publishArtifacts")
     test_tasks = [] if tests == "none" else resolve(work, env, jvm, launcher, tests)
+    if views:
+        provided.update(project_inputs.stage_coursier(cache, views, work))
     log("compiling every module with an empty coursier cache")
     if run_mill(work, env, jvm, launcher, ["__.compile"]).returncode != 0:
         raise Failure("the lock run failed in `__.compile`")
@@ -675,11 +693,12 @@ def lock(root, lock_file, tests=None, updated=None):
             raise Failure("the lock run failed publishing with mill.javalib.MavenPublishModule")
 
     canonical_cache(cache)
-    files = coursier_cache.downloaded_files(cache)
+    provided = {coursier_cache.canonical(path, MIRRORS)[0] for path in provided}
+    files = [path for path in coursier_cache.downloaded_files(cache) if path not in provided]
     listings = [p for p in files if coursier_cache.is_version_listing(p)]
     kept = [p for p in files if not coursier_cache.is_version_listing(p)]
     inline = []
-    if listings and not offline_check(root, state, kept, cache, launcher_path):
+    if listings and not offline_check(root, state, kept, cache, launcher_path, views=views):
         # A listing changes upstream whenever a version is published, so no
         # hash of it holds; the lock keeps it as the lock run read it, and
         # the offline build resolves to the versions the lock run picked.
@@ -702,6 +721,8 @@ def lock(root, lock_file, tests=None, updated=None):
         "platforms": platforms,
         "artifacts": lock_entries(cache, kept) + inline,
     }
+    if inputs:
+        result["projectInputs"] = inputs
     result["contentHash"] = content_hash(result)
     lock_file.write_text(json.dumps(result, indent=2) + "\n")
     log(f"wrote {lock_file}")
@@ -786,6 +807,10 @@ def prefetch(root, lock_file):
     current = read_lock(root, lock_file)
     state = lock_file.parent / PREFETCH_DIR
     built = {attribute: str(nix_build(root, lock_file, state, attribute)) for attribute, _ in CACHE_ATTRIBUTES}
+    if current.get("projectInputs"):
+        import project_inputs
+        built["projectInputs"] = [{key: str(value) for key, value in view.items()}
+                                  for view in project_inputs.maven_views(current["projectInputs"], state / "project-inputs")]
     (state / PREFETCH_STATE).write_text(json.dumps({"contentHash": current["contentHash"], **built}, indent=2) + "\n")
     log(f"prefetched {lock_file} for {nix_system()}; Mill now runs without the network")
     return built
@@ -819,6 +844,9 @@ def caches(root, lock_file, current):
             link_tree(Path(built), cache_dir / name)
             stamp.write_text(built)
         result.append(cache_dir / name)
+    if state.get("projectInputs"):
+        import project_inputs
+        project_inputs.stage_coursier(result[0], state["projectInputs"], root, lock_file)
     return result
 
 
@@ -962,6 +990,21 @@ def main(argv):
                 raise Failure("no ordinary mill found; install Mill or set MILL_PURIFIER_MILL")
             os.execvp(command, [command, *rest])
         build_file(root)
+        input_refs = None
+        if verb in ("lock", "update"):
+            remaining = []
+            arguments = iter(rest)
+            for argument in arguments:
+                if argument == "--input":
+                    reference = next(arguments, None)
+                    if reference is None:
+                        raise Failure("--input needs a flake package")
+                    if input_refs is None:
+                        input_refs = []
+                    input_refs.append(reference)
+                else:
+                    remaining.append(argument)
+            rest = remaining
         if verb == "lock":
             tests = None
             if rest[:1] == ["--tests"] and len(rest) == 2:
@@ -969,9 +1012,9 @@ def main(argv):
             elif rest:
                 print(__doc__.strip(), file=sys.stderr)
                 return 2
-            lock(root, lock_file, tests=tests)
+            lock(root, lock_file, tests=tests, **({"input_refs": input_refs} if input_refs is not None else {}))
         elif verb == "update" and not any(":" not in name for name in rest):
-            lock(root, lock_file, updated=rest)
+            lock(root, lock_file, updated=rest, **({"input_refs": input_refs} if input_refs is not None else {}))
         elif verb == "prefetch" and not rest:
             prefetch(root, lock_file)
             caches(root, lock_file, read_lock(root, lock_file))

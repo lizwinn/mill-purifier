@@ -60,6 +60,11 @@
   # `fetchurl` with credentials or a company mirror. The default is
   # nixpkgs' own.
   fetchers ? { },
+  # Nix-built JVM inputs; their catalogs select the actual artifact bytes.
+  projectDependencies ? purifier.lockedProjectInputs {
+    inputs = (builtins.fromJSON (builtins.readFile lockFile)).projectInputs or [ ];
+    system = stdenvNoCC.hostPlatform.system;
+  },
   # The lockfile; the default is the one `mill-purifier lock` writes at the
   # build root.
   lockFile ? src + "/mill-purifier.lock.json",
@@ -154,6 +159,12 @@ let
     entries = systemEntries;
     fetchEntry = purifier.fetchEntry fetcherArgs;
   };
+  provided = purifier.jvmProjections {
+    repository = null;
+    dependencies = projectDependencies;
+    inherit runCommand python3;
+    name = "mill-provided-dependencies";
+  };
   gitShim = if git == null then null else callPackage ./git-shim.nix { } git;
 
   # The Mill invocation shared by every build from the lock;
@@ -184,6 +195,11 @@ let
       cp -rs --no-preserve=mode ${dependencies}/. "$COURSIER_CACHE"
       cp -rs --no-preserve=mode ${archiveCache}/. "$COURSIER_ARCHIVE_CACHE"
     fi
+    ${lib.optionalString (projectDependencies != [ ]) ''
+      ${python3}/bin/python ${purifier.coursierInputsTool}/coursier_inputs.py \
+        --cache "$COURSIER_CACHE" --repository ${provided.maven} \
+        --catalog ${provided.maven.catalog} --sources "$PWD" --lock ${lockFile}
+    ''}
     java $JAVA_OPTS -jar "$COURSIER_CACHE/${launcher}" \
       --no-daemon --ticker false ${args} </dev/null || {
       echo "mill-purifier: Mill failed in the Nix sandbox, offline, with only the downloads of the lockfile." >&2
@@ -239,6 +255,12 @@ let
             rest=''${name#"$id-$version"}
             ln -s "../../$dir/$name" "$out/${linkDirectory}/$id$rest"
           done
+        ${lib.optionalString (projectDependencies != [ ]) ''
+          for pom in "$out/$dir"/*.pom; do
+            ${python3}/bin/python ${purifier.jvmRepositoryTool} \
+              --rewrite-pom "$pom" --catalog ${provided.maven.catalog}
+          done
+        ''}
         # Mill writes the time of the build into its jars (zip entry times,
         # and the dates javadoc writes into its pages); the package sets them
         # to SOURCE_DATE_EPOCH, so a build of the same source gives the same
@@ -260,6 +282,12 @@ let
       '';
       passthru = {
         millProject = project;
+        projections = purifier.jvmProjections {
+          repository = finalAttrs.finalPackage;
+          dependencies = projectDependencies;
+          inherit runCommand python3;
+          name = "mill-jvm-publications";
+        };
         # The artifact files of the package by key, such as
         # artifacts."core_3-sources.jar". They are known from the lock
         # alone, before the package is built.
@@ -306,32 +334,21 @@ let
   # publish as `--publishArtifacts`, so `__.publishArtifacts` publishes what
   # Nix built. Its modules are named m0, m1, … in the order of the lock;
   # each has a comment naming the module it publishes.
+  rootProjections = purifier.jvmProjections {
+    repository = null;
+    dependencies = builtins.attrValues packages;
+    inherit runCommand python3;
+    name = "mill-publication-closure";
+  };
   publishBuild =
     runCommand "mill-publish-build"
       {
-        nativeBuildInputs = [ jq ];
         preferLocalBuild = true;
       }
       ''
         mkdir -p $out
-        {
-          echo '//| mill-version: ${millVersion}'
-          echo '//| mill-jvm-version: system'
-          echo 'package build'
-          echo 'import mill.*, mill.javalib.*, mill.javalib.publish.*'
-          ${lib.concatImapStrings (i: p: ''
-            echo
-            echo ${lib.escapeShellArg "// ${p.id}"}
-            jq -r --arg name ${lib.escapeShellArg "m${toString (i - 1)}"} '
-              "object \($name) extends Module {\n" +
-              "  def publishArtifacts = Task {\n" +
-              "    PublishModule.PublishData(\n" +
-              "      Artifact(\(.group | tojson), \(.id | tojson), \(.version | tojson)),\n" +
-              "      Seq(\n" +
-              ([.files[] | "        PathRef(os.Path(\(.path | tojson))) -> \(.name | tojson)"] | join(",\n")) +
-              "\n      )\n    )\n  }\n}"' ${packages.${p.id}}/nix-support/publish.json
-          '') (builtins.attrValues lock.mill.projectsById)}
-        } > $out/build.mill
+        ${python3}/bin/python ${./publish-build.py} \
+          ${rootProjections.maven} ${rootProjections.maven.catalog} "$out/build.mill" ${lib.escapeShellArg millVersion}
       '';
 
   # Mill's MavenPublishModule publishes publishBuild into a file:
@@ -364,6 +381,7 @@ let
   };
 in
 {
+  projections = rootProjections;
   inherit
     lock
     packages

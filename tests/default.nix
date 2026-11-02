@@ -144,6 +144,13 @@ let
   };
 in
 {
+  composition = import ./composition.nix {
+    inherit pkgs build;
+    purifier = (pkgs.extend overlay).lib.purifier;
+  };
+
+  jvm-projection = core.projections.maven;
+
   inherit cli;
 
   simple-core = core;
@@ -158,9 +165,11 @@ in
 
   # Mill's Maven publisher, offline, publishes the files Nix built.
   simple-release = pkgs.runCommand "simple-release" { } ''
-    cmp ${simple.release}/example/core_3/0.1.0/core_3-0.1.0.jar ${core.artifacts."core_3.jar"}
-    cmp ${simple.release}/example/core_3/0.1.0/core_3-0.1.0.pom ${core.artifacts."core_3.pom"}
-    test -f ${simple.release}/example/core_3/0.1.0/core_3-0.1.0-sources.jar.sha1
+    directory=$(find ${simple.release}/example/core_3 -mindepth 1 -maxdepth 1 -type d -name '0.1.0-nix-*')
+    version=$(basename "$directory")
+    cmp "$directory/core_3-$version.jar" ${core.artifacts."core_3.jar"}
+    cmp "$directory/core_3-$version.pom" "${simple.projections.maven}/example/core_3/$version/core_3-$version.pom"
+    test -f "$directory/core_3-$version-sources.jar.sha1"
     touch $out
   '';
 
@@ -356,10 +365,22 @@ in
     "polyglot-versioned-output"
     [ "versioned.run" ]
   ) "built with Scala 3.7.3";
-  polyglot-release = pkgs.runCommand "polyglot-release" { } ''
-    for path in example/greeter/0.1.0/greeter-0.1.0.jar example/hello/0.1.0/hello-0.1.0.jar example/versioned_3/1.2.3/versioned_3-1.2.3.jar; do
-      test -f ${polyglot.release}/$path
-    done
+  polyglot-release = pkgs.runCommand "polyglot-release" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+    export REPOSITORY=${polyglot.projections.maven}
+    export CATALOG=${polyglot.projections.maven.catalog}
+    export RELEASE=${polyglot.release}
+    python - <<'PYTHON'
+    import json, os
+    from pathlib import Path
+    modules = json.loads(Path(os.environ['CATALOG']).read_text())['modules']
+    assert {module['name'] for module in modules} == {'greeter', 'hello', 'versioned_3'}
+    for module in modules:
+        directory = Path(module['group'].replace('.', '/')) / module['name'] / module['version']
+        assert '-nix-' in module['version']
+        for source in (Path(os.environ['REPOSITORY']) / directory).iterdir():
+            if source.suffix in {'.jar', '.pom'}:
+                assert (Path(os.environ['RELEASE']) / directory / source.name).read_bytes() == source.read_bytes()
+    PYTHON
     touch $out
   '';
 }
